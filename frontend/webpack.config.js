@@ -13,7 +13,14 @@ module.exports = {
   devServer: {
     static: "./dist",
     port: 3000,
-    hot: true
+    hot: true,
+    proxy: [
+      {
+        context: ['/api'],
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      }
+    ]
   },
   resolve: {
     extensions: [".ts", ".tsx", ".js"]
