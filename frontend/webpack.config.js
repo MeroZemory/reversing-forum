@@ -12,12 +12,13 @@ module.exports = {
   devtool: "inline-source-map",
   devServer: {
     static: "./dist",
-    port: 3000,
+    port: 8080,
+    host: '0.0.0.0',
     hot: true,
     proxy: [
       {
         context: ['/api'],
-        target: 'http://localhost:8000',
+        target: 'http://backend:8000',
         changeOrigin: true,
       }
     ]
