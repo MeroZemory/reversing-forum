@@ -1,4 +1,14 @@
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
   backend:
     build: ./backend
     volumes:
@@ -6,12 +16,15 @@ services:
     ports:
       - "8000:8000"
       - "5678:5678"
+    depends_on:
+      - db
     environment:
-      - ENVIRONMENT=development
-      - PYTHONDONTWRITEBYTECODE=1
-      - PYTHONUNBUFFERED=1
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      ENVIRONMENT: development
+      PYTHONDONTWRITEBYTECODE: 1
+      PYTHONUNBUFFERED: 1
     command: python -m debugpy --listen 0.0.0.0:5678 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-  
+
   frontend:
     build: ./frontend
     volumes:
@@ -23,3 +36,6 @@ services:
       - WATCHPACK_POLLING=true
     depends_on:
       - backend
+
+volumes:
+  postgres_data:
