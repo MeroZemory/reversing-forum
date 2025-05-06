@@ -20,7 +20,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error }) => {
 
   return (
     <div>
-      <h2>로그인</h2>
       <LoginFields
         username={form.username}
         password={form.password}
