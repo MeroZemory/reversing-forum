@@ -10,13 +10,14 @@ import axios from "axios";
 interface AuthContextType {
   isLoggedIn: boolean;
   username: string | null;
-  login: (username: string, password: string) => Promise<void>;
+  // login: (username: string, password: string) => Promise<void>;
   logout: () => void;
-  register: (
-    username: string,
-    email: string,
-    password: string
-  ) => Promise<void>;
+  // register: (
+  //   username: string,
+  //   email: string,
+  //   password: string
+  // ) => Promise<void>;
+  googleLogin: (token: string) => Promise<void>;
   error: string | null;
 }
 
@@ -36,6 +37,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
+  /*
   const login = async (username: string, password: string) => {
     try {
       setError(null);
@@ -64,6 +66,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return Promise.reject(err);
     }
   };
+  */
+
+  const googleLogin = async (token: string) => {
+    try {
+      setError(null);
+      const response = await axios.post("/api/auth/google", { token });
+      setIsLoggedIn(true);
+      setUsername(response.data.user.username);
+      localStorage.setItem("username", response.data.user.username);
+      return Promise.resolve();
+    } catch (err: any) {
+      setError(
+        err.response?.data?.detail || "구글 로그인 중 오류가 발생했습니다."
+      );
+      return Promise.reject(err);
+    }
+  };
 
   const logout = () => {
     setIsLoggedIn(false);
@@ -74,7 +93,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <AuthContext.Provider
-      value={{ isLoggedIn, username, login, logout, register, error }}
+      value={{ isLoggedIn, username, googleLogin, logout, error }}
     >
       {children}
     </AuthContext.Provider>

@@ -4,7 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import LoginForm from "../components/LoginForm";
 
 const LoginPage: React.FC = () => {
-  const { isLoggedIn, login, error } = useAuth();
+  const { isLoggedIn, googleLogin, error } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [message, setMessage] = useState<string | null>(null);
@@ -28,17 +28,13 @@ const LoginPage: React.FC = () => {
     }
   }, [isLoggedIn, navigate, from]);
 
-  const handleRegisterClick = () => {
-    navigate("/register");
-  };
-
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
       <div className="w-full max-w-md p-8 space-y-8 bg-white rounded-lg shadow-md">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gray-900">로그인</h1>
           <p className="mt-2 text-sm text-gray-600">
-            계정에 로그인하여 Reversing Forum을 이용하세요
+            구글 계정으로 Reversing Forum을 이용하세요
           </p>
         </div>
 
@@ -48,11 +44,7 @@ const LoginPage: React.FC = () => {
           </div>
         )}
 
-        <LoginForm
-          onLogin={login}
-          error={error || undefined}
-          onRegisterClick={handleRegisterClick}
-        />
+        <LoginForm onGoogleLogin={googleLogin} error={error || undefined} />
 
         <div className="text-center mt-4">
           <button

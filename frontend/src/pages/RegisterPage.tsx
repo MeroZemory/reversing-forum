@@ -4,7 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 
 const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
-  const { register, error: authError } = useAuth();
+  // const { register, error: authError } = useAuth();
   const [form, setForm] = useState({
     username: "",
     email: "",
@@ -19,30 +19,26 @@ const RegisterPage: React.FC = () => {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // 비밀번호 확인
-    if (form.password !== form.confirmPassword) {
-      setError("비밀번호가 일치하지 않습니다.");
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      // AuthContext의 register 함수 사용
-      await register(form.username, form.email, form.password);
-
-      // 성공 시 로그인 페이지로 이동
-      navigate("/login", {
-        state: { message: "회원가입이 완료되었습니다. 로그인해주세요." },
-      });
-    } catch (err: any) {
-      setError(authError);
-    } finally {
-      setIsLoading(false);
-    }
+    // e.preventDefault();
+    // // 비밀번호 확인
+    // if (form.password !== form.confirmPassword) {
+    //   setError("비밀번호가 일치하지 않습니다.");
+    //   return;
+    // }
+    // try {
+    //   setIsLoading(true);
+    //   setError(null);
+    //   // AuthContext의 register 함수 사용
+    //   await register(form.username, form.email, form.password);
+    //   // 성공 시 로그인 페이지로 이동
+    //   navigate("/login", {
+    //     state: { message: "회원가입이 완료되었습니다. 로그인해주세요." },
+    //   });
+    // } catch (err: any) {
+    //   setError(authError);
+    // } finally {
+    //   setIsLoading(false);
+    // }
   };
 
   return (
