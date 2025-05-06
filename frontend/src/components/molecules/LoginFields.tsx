@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 // import Input from '../atoms/Input';
 // import Button from '../atoms/Button';
 
@@ -9,7 +9,12 @@ interface LoginFieldsProps {
   onSubmit: (e: React.FormEvent) => void;
 }
 
-const LoginFields: React.FC<LoginFieldsProps> = ({ username, password, onChange, onSubmit }) => (
+const LoginFields: React.FC<LoginFieldsProps> = ({
+  username,
+  password,
+  onChange,
+  onSubmit,
+}) => (
   <form onSubmit={onSubmit}>
     {/* 아이디 입력 */}
     <input
@@ -19,6 +24,7 @@ const LoginFields: React.FC<LoginFieldsProps> = ({ username, password, onChange,
       onChange={onChange}
       autoComplete="username"
     />
+
     {/* 비밀번호 입력 */}
     <input
       name="password"
@@ -28,6 +34,7 @@ const LoginFields: React.FC<LoginFieldsProps> = ({ username, password, onChange,
       onChange={onChange}
       autoComplete="current-password"
     />
+
     {/* 로그인 버튼 */}
     <button type="submit">로그인</button>
   </form>

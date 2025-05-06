@@ -7,45 +7,41 @@ module.exports = {
   output: {
     filename: "bundle.js",
     path: path.resolve(__dirname, "dist"),
-    clean: true
+    clean: true,
   },
   devtool: "source-map",
   devServer: {
     static: "./dist",
     hot: true,
     port: 8080,
-    host: '0.0.0.0',
+    host: "0.0.0.0",
     proxy: [
       {
-        context: ['/api'],
-        target: 'http://backend:8000',
+        context: ["/api"],
+        target: "http://backend:8000",
         changeOrigin: true,
-      }
-    ]
+      },
+    ],
   },
   resolve: {
-    extensions: [".ts", ".tsx", ".js"]
+    extensions: [".ts", ".tsx", ".js"],
   },
   module: {
     rules: [
       {
         test: /\.(ts|tsx)$/,
         use: "ts-loader",
-        exclude: /node_modules/
+        exclude: /node_modules/,
       },
       {
         test: /\.css$/,
-        use: [
-          'style-loader',
-          'css-loader',
-          'postcss-loader'
-        ]
-      }
-    ]
+        use: ["style-loader", "css-loader", "postcss-loader"],
+      },
+    ],
   },
   plugins: [
     new HtmlWebpackPlugin({
-      template: "public/index.html"
-    })
-  ]
+      template: "public/index.html",
+    }),
+  ],
 };

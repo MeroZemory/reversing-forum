@@ -21,17 +21,26 @@ const TopRightAuth: React.FC = () => {
 
 // 상단 레이아웃 컴포넌트
 const Header: React.FC = () => (
-  <div style={{
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    height: 80,
-    padding: "0 40px",
-    borderBottom: "1px solid #eee",
-    position: "relative"
-  }}>
-  <div style={{ fontWeight: "bold", fontSize: 24 }}>Reversing Forum</div>
-  <div style={{ position: "relative", width: 300, display: "flex", justifyContent: "flex-end" }}>
+  <div
+    style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      height: 80,
+      padding: "0 40px",
+      borderBottom: "1px solid #eee",
+      position: "relative",
+    }}
+  >
+    <div style={{ fontWeight: "bold", fontSize: 24 }}>Reversing Forum</div>
+    <div
+      style={{
+        position: "relative",
+        width: 300,
+        display: "flex",
+        justifyContent: "flex-end",
+      }}
+    >
       <TopRightAuth />
     </div>
   </div>
@@ -41,8 +50,18 @@ const Header: React.FC = () => (
 const App = () => (
   <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
     <Header />
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-      <h1 style={{ textAlign: "center", marginTop: 100 }}>Hello, React + TypeScript + Webpack!</h1>
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <h1 style={{ textAlign: "center", marginTop: 100 }}>
+        Hello, React + TypeScript + Webpack!
+      </h1>
     </div>
   </div>
 );
@@ -51,5 +70,5 @@ const root = ReactDOM.createRoot(document.getElementById("root")!);
 root.render(
   <AuthProvider>
     <App />
-  </AuthProvider>
+  </AuthProvider>,
 );

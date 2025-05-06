@@ -1,5 +1,11 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import axios from 'axios';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  ReactNode,
+  useEffect,
+} from "react";
+import axios from "axios";
 
 interface AuthContextType {
   isLoggedIn: boolean;
@@ -18,7 +24,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     // localStorage에서 로그인 상태 복원
-    const savedUser = localStorage.getItem('username');
+    const savedUser = localStorage.getItem("username");
     if (savedUser) {
       setIsLoggedIn(true);
       setUsername(savedUser);
@@ -27,13 +33,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     try {
-      const response = await axios.post('/api/login', { username, password });
+      const response = await axios.post("/api/login", { username, password });
       setIsLoggedIn(true);
       setUsername(response.data.username);
       setError(null);
-      localStorage.setItem('username', response.data.username);
+      localStorage.setItem("username", response.data.username);
     } catch (err) {
-      setError('아이디 또는 비밀번호가 올바르지 않습니다.');
+      setError("아이디 또는 비밀번호가 올바르지 않습니다.");
     }
   };
 
@@ -41,11 +47,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoggedIn(false);
     setUsername(null);
     setError(null);
-    localStorage.removeItem('username');
+    localStorage.removeItem("username");
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, username, login, logout, error }}>
+    <AuthContext.Provider
+      value={{ isLoggedIn, username, login, logout, error }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -53,6 +61,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth는 AuthProvider 내에서만 사용해야 합니다.');
+  if (!context)
+    throw new Error("useAuth는 AuthProvider 내에서만 사용해야 합니다.");
   return context;
 };

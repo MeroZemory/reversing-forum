@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import LoginFields from '../molecules/LoginFields';
+import React, { useState } from "react";
+import LoginFields from "../molecules/LoginFields";
 
 interface LoginFormProps {
   onLogin: (username: string, password: string) => void;
@@ -7,7 +7,7 @@ interface LoginFormProps {
 }
 
 const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error }) => {
-  const [form, setForm] = useState({ username: '', password: '' });
+  const [form, setForm] = useState({ username: "", password: "" });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value });
@@ -27,7 +27,7 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error }) => {
         onChange={handleChange}
         onSubmit={handleSubmit}
       />
-      {error && <div style={{ color: 'red' }}>{error}</div>}
+      {error && <div style={{ color: "red" }}>{error}</div>}
     </div>
   );
 };

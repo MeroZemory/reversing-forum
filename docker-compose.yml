@@ -9,7 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      
+
   backend:
     build: ./backend
     volumes:
@@ -32,7 +32,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ./frontend:/app
-      - /app/node_modules  # 이 볼륨은 컨테이너의 node_modules를 보존합니다
+      - /app/node_modules # 이 볼륨은 컨테이너의 node_modules를 보존합니다
     ports:
       - "8080:8080"
     environment:
