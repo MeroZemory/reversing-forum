@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import LoginForm from "./components/organisms/LoginForm";
 import UserProfile from "./components/organisms/UserProfile";
+import "./styles/tailwind.css";
 
 // 우상단 로그인/유저 정보 표시용 래퍼 컴포넌트
 const TopRightAuth: React.FC = () => {
@@ -29,8 +30,8 @@ const Header: React.FC = () => (
     borderBottom: "1px solid #eee",
     position: "relative"
   }}>
-    <div style={{ fontWeight: "bold", fontSize: 24 }}>Reversing Forum</div>
-    <div style={{ position: "relative", width: 300, display: "flex", justifyContent: "flex-end" }}>
+  <div style={{ fontWeight: "bold", fontSize: 24 }}>Reversing Forum</div>
+  <div style={{ position: "relative", width: 300, display: "flex", justifyContent: "flex-end" }}>
       <TopRightAuth />
     </div>
   </div>

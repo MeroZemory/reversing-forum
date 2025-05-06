@@ -9,6 +9,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      
   backend:
     build: ./backend
     volumes:
@@ -26,10 +27,12 @@ services:
     command: python -m debugpy --listen 0.0.0.0:5678 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     volumes:
       - ./frontend:/app
-      - /app/node_modules
+      - /app/node_modules  # 이 볼륨은 컨테이너의 node_modules를 보존합니다
     ports:
       - "8080:8080"
     environment:
