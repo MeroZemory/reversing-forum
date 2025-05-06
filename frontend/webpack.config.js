@@ -8,6 +8,7 @@ module.exports = {
     filename: "bundle.js",
     path: path.resolve(__dirname, "dist"),
     clean: true,
+    publicPath: "/",
   },
   devtool: "source-map",
   devServer: {
@@ -15,6 +16,7 @@ module.exports = {
     hot: true,
     port: 8080,
     host: "0.0.0.0",
+    historyApiFallback: true,
     proxy: [
       {
         context: ["/api"],

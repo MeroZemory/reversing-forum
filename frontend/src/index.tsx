@@ -1,47 +1,39 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import LoginForm from "./components/organisms/LoginForm";
-import UserProfile from "./components/organisms/UserProfile";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./contexts/AuthContext";
+import Header from "./components/organisms/Header";
+import HomePage from "./pages/HomePage";
+import LoginPage from "./pages/LoginPage";
 import "./styles/tailwind.css";
 
-// 우상단 로그인/유저 정보 표시용 래퍼 컴포넌트
-const TopRightAuth: React.FC = () => {
-  const { isLoggedIn, username, login, logout, error } = useAuth();
-  return (
-    <div className="w-full">
-      {isLoggedIn ? (
-        <UserProfile username={username!} onLogout={logout} />
-      ) : (
-        <LoginForm onLogin={login} error={error || undefined} />
-      )}
-    </div>
-  );
-};
-
-// 상단 레이아웃 컴포넌트
-const Header: React.FC = () => (
-  <div className="flex justify-between items-center min-h-[5rem] px-10 border-b border-gray-200 relative">
-    <div className="font-bold text-2xl">Reversing Forum</div>
-    <div className="relative w-[300px] flex justify-end">
-      <TopRightAuth />
-    </div>
+// 레이아웃 컴포넌트
+const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="min-h-screen flex flex-col">
+    <Header />
+    {children}
   </div>
 );
 
-// 메인 레이아웃 컴포넌트
+// 메인 앱 컴포넌트
 const App = () => (
-  <div className="min-h-screen flex flex-col">
-    <Header />
-    <div className="flex-1 flex flex-col items-center justify-center">
-      <h1 className="text-center">Hello, React + TypeScript + Webpack!</h1>
-    </div>
-  </div>
+  <BrowserRouter>
+    <AuthProvider>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <Layout>
+              <HomePage />
+            </Layout>
+          }
+        />
+        <Route path="/login" element={<LoginPage />} />
+        {/* 추후 다른 라우트 추가 가능 */}
+      </Routes>
+    </AuthProvider>
+  </BrowserRouter>
 );
 
 const root = ReactDOM.createRoot(document.getElementById("root")!);
-root.render(
-  <AuthProvider>
-    <App />
-  </AuthProvider>
-);
+root.render(<App />);

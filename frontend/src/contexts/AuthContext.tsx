@@ -33,10 +33,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const login = async (username: string, password: string) => {
     try {
+      setError(null);
       const response = await axios.post("/api/login", { username, password });
       setIsLoggedIn(true);
       setUsername(response.data.username);
-      setError(null);
       localStorage.setItem("username", response.data.username);
     } catch (err) {
       setError("아이디 또는 비밀번호가 올바르지 않습니다.");
