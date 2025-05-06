@@ -19,14 +19,14 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin, error }) => {
   };
 
   return (
-    <div>
+    <div className="flex flex-col">
       <LoginFields
         username={form.username}
         password={form.password}
         onChange={handleChange}
         onSubmit={handleSubmit}
       />
-      {error && <div style={{ color: "red" }}>{error}</div>}
+      {error && <div className="text-red-500 text-xs mt-1">{error}</div>}
     </div>
   );
 };
