@@ -12,6 +12,11 @@ interface AuthContextType {
   username: string | null;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  register: (
+    username: string,
+    email: string,
+    password: string
+  ) => Promise<void>;
   error: string | null;
 }
 
@@ -43,6 +48,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const register = async (
+    username: string,
+    email: string,
+    password: string
+  ) => {
+    try {
+      setError(null);
+      await axios.post("/api/register", { username, email, password });
+      return Promise.resolve();
+    } catch (err: any) {
+      setError(
+        err.response?.data?.detail || "회원가입 중 오류가 발생했습니다."
+      );
+      return Promise.reject(err);
+    }
+  };
+
   const logout = () => {
     setIsLoggedIn(false);
     setUsername(null);
@@ -52,7 +74,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <AuthContext.Provider
-      value={{ isLoggedIn, username, login, logout, error }}
+      value={{ isLoggedIn, username, login, logout, register, error }}
     >
       {children}
     </AuthContext.Provider>

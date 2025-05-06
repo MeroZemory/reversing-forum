@@ -5,6 +5,7 @@ import { AuthProvider } from "./contexts/AuthContext";
 import Header from "./components/Header";
 import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
+import RegisterPage from "./pages/RegisterPage";
 import "./styles/tailwind.css";
 
 // 레이아웃 컴포넌트
@@ -29,7 +30,7 @@ const App = () => (
           }
         />
         <Route path="/login" element={<LoginPage />} />
-        {/* 추후 다른 라우트 추가 가능 */}
+        <Route path="/register" element={<RegisterPage />} />
       </Routes>
     </AuthProvider>
   </BrowserRouter>

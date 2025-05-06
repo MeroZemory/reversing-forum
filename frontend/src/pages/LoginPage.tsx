@@ -1,15 +1,25 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
-import LoginForm from "../components/organisms/LoginForm";
+import LoginForm from "../components/LoginForm";
 
 const LoginPage: React.FC = () => {
   const { isLoggedIn, login, error } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [message, setMessage] = useState<string | null>(null);
 
   // 이전 페이지 정보 (state에서 가져오거나 기본값으로 홈)
   const from = location.state?.from?.pathname || "/";
+
+  // 회원가입 완료 메시지 설정
+  useEffect(() => {
+    if (location.state?.message) {
+      setMessage(location.state.message);
+      // 브라우저 히스토리에서 메시지 제거
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   // 이미 로그인되어 있으면 이전 페이지로 리디렉션
   useEffect(() => {
@@ -31,6 +41,12 @@ const LoginPage: React.FC = () => {
             계정에 로그인하여 Reversing Forum을 이용하세요
           </p>
         </div>
+
+        {message && (
+          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded text-sm">
+            {message}
+          </div>
+        )}
 
         <LoginForm
           onLogin={login}
