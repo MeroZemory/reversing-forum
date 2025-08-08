@@ -10,13 +10,7 @@ import axios from "axios";
 interface AuthContextType {
   isLoggedIn: boolean;
   username: string | null;
-  // login: (username: string, password: string) => Promise<void>;
   logout: () => void;
-  // register: (
-  //   username: string,
-  //   email: string,
-  //   password: string
-  // ) => Promise<void>;
   googleLogin: (token: string) => Promise<void>;
   error: string | null;
 }
@@ -36,37 +30,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUsername(savedUser);
     }
   }, []);
-
-  /*
-  const login = async (username: string, password: string) => {
-    try {
-      setError(null);
-      const response = await axios.post("/api/login", { username, password });
-      setIsLoggedIn(true);
-      setUsername(response.data.username);
-      localStorage.setItem("username", response.data.username);
-    } catch (err) {
-      setError("아이디 또는 비밀번호가 올바르지 않습니다.");
-    }
-  };
-
-  const register = async (
-    username: string,
-    email: string,
-    password: string
-  ) => {
-    try {
-      setError(null);
-      await axios.post("/api/register", { username, email, password });
-      return Promise.resolve();
-    } catch (err: any) {
-      setError(
-        err.response?.data?.detail || "회원가입 중 오류가 발생했습니다."
-      );
-      return Promise.reject(err);
-    }
-  };
-  */
 
   const googleLogin = async (token: string) => {
     try {

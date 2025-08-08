@@ -1,79 +1,13 @@
-import React, { useState } from "react";
+import React from "react";
 import { GoogleLogin } from "@react-oauth/google";
 
 interface LoginFormProps {
-  // onLogin: (username: string, password: string) => void;
   onGoogleLogin: (token: string) => void;
-  error?: string;
-  // onRegisterClick?: () => void;
 }
 
-const LoginForm: React.FC<LoginFormProps> = ({
-  // onLogin,
-  onGoogleLogin,
-  error,
-  // onRegisterClick,
-}) => {
-  /*
-  const [form, setForm] = useState({ username: "", password: "" });
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onLogin(form.username, form.password);
-  };
-  */
-
+const LoginForm: React.FC<LoginFormProps> = ({ onGoogleLogin }) => {
   return (
     <div className="flex flex-col items-center">
-      {/* 기존 로그인 폼 주석 처리
-      <form onSubmit={handleSubmit} className="flex w-full">
-        <div className="flex flex-col space-y-2 w-full">
-          {/* 아이디 입력 */}
-      {/* <input
-            name="username"
-            placeholder="아이디"
-            value={form.username}
-            onChange={handleChange}
-            autoComplete="username"
-            className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-          /> */}
-
-      {/* 비밀번호 입력 */}
-      {/* <input
-            name="password"
-            type="password"
-            placeholder="비밀번호"
-            value={form.password}
-            onChange={handleChange}
-            autoComplete="current-password"
-            className="px-3 py-1.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-sm"
-          /> */}
-
-      {error && <div className="text-red-500 text-xs mt-1">{error}</div>}
-
-      {/* 로그인 버튼 */}
-      {/* <button
-            type="submit"
-            className="bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-300 shadow-sm hover:shadow-md mt-1"
-          >
-            로그인
-          </button> */}
-
-      {/* 회원가입 버튼 */}
-      {/* <button
-            type="button"
-            onClick={onRegisterClick}
-            className="text-blue-600 hover:text-blue-800 text-xs font-medium py-1 self-center mt-1"
-          >
-            회원가입
-          </button>
-        </div>
-      </form> */}
-
       {/* 구글 로그인 버튼 */}
       <div className="mt-4 w-full">
         <div className="flex justify-center">

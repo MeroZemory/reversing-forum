@@ -44,7 +44,7 @@ const LoginPage: React.FC = () => {
           </div>
         )}
 
-        <LoginForm onGoogleLogin={googleLogin} error={error || undefined} />
+        <LoginForm onGoogleLogin={googleLogin} />
 
         <div className="text-center mt-4">
           <button
