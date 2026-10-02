@@ -192,9 +192,12 @@ it("오케스트레이터 repair opt-in은 기존 native hash를 유지하고 �
   mkdirSync(native, { recursive: true });
   mkdirSync(relevant, { recursive: true });
   mkdirSync(join(data, "schemas"), { recursive: true });
+  mkdirSync(join(root, "src/server/chat-pipeline/schemas"), {
+    recursive: true,
+  });
   const write = (file: string, value: unknown) =>
     writeFileSync(file, JSON.stringify(value));
-  for (const mode of ["candidate", "draft", "review"])
+  for (const mode of ["candidate", "draft", "review"]) {
     write(
       join(data, "schemas", `${mode}.schema.json`),
       JSON.parse(
@@ -204,6 +207,16 @@ it("오케스트레이터 repair opt-in은 기존 native hash를 유지하고 �
         ),
       ),
     );
+    write(
+      join(root, "src/server/chat-pipeline/schemas", `${mode}.schema.json`),
+      JSON.parse(
+        readFileSync(
+          resolve("src/server/chat-pipeline/schemas", `${mode}.schema.json`),
+          "utf8",
+        ),
+      ),
+    );
+  }
   const ids = [1, 2, 3].map((n) => n.toString(16).padStart(64, "0"));
   const packets = ids.map((packetId) => ({
     packetId,

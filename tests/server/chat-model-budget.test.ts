@@ -37,6 +37,35 @@ const usage = {
   output_tokens: 10_000,
 };
 describe("pipeline model proxy budget", () => {
+  it("reserves the actual repair model cost before admitting a more expensive call", () => {
+    const ledger = new ModelBudget(":memory:", config);
+    try {
+      expect(
+        ledger.reserve("gpt-6-luna", "candidate", 0.85, "prior"),
+      ).not.toBeNull();
+      const sol = reservationProxyUsd(
+        config,
+        "candidate",
+        "synthetic",
+        "gpt-6.1-sol",
+      );
+      expect(
+        ledger.reserve("gpt-6.1-sol", "candidate", sol, "repair"),
+      ).toBeNull();
+      const luna = reservationProxyUsd(
+        config,
+        "candidate",
+        "synthetic",
+        "gpt-6-luna",
+      );
+      expect(
+        ledger.reserve("gpt-6-luna", "candidate", luna, "scan"),
+      ).not.toBeNull();
+      expect(ledger.summary().chargedOrReservedProxyUsd).toBeLessThan(1);
+    } finally {
+      ledger.close();
+    }
+  });
   it("charges uncached, cached and inclusive output separately", () => {
     expect(usageProxyUsd("gpt-6.1-sol", normalizeUsage(usage)!)).toBeCloseTo(
       0.148,
@@ -138,16 +167,56 @@ describe("pipeline model proxy budget", () => {
       expect(accountAvailable({ id: config.accountId }, config.accountId)).toBe(
         false,
       );
+      expect(
+        accountAvailable(
+          { id: config.accountId, quota: { weeklyPercent: 100 } },
+          config.accountId,
+          true,
+        ),
+      ).toBe(true);
+      expect(
+        accountAvailable(
+          { id: "different", quota: { weeklyPercent: 100 } },
+          config.accountId,
+          true,
+        ),
+      ).toBe(false);
+      expect(
+        accountAvailable(
+          { id: config.accountId, paused: true, quota: { weeklyPercent: 100 } },
+          config.accountId,
+          true,
+        ),
+      ).toBe(false);
+      expect(
+        accountAvailable(
+          {
+            id: config.accountId,
+            needsReauth: true,
+            quota: { weeklyPercent: 100 },
+          },
+          config.accountId,
+          true,
+        ),
+      ).toBe(false);
+      expect(
+        accountAvailable({ id: config.accountId }, config.accountId, true),
+      ).toBe(false);
     } finally {
       ledger.close();
     }
     for (const override of [
       { maxPercent: 11 },
       { creditsPerProxyUsd: 1 },
+      { allowCreditUsage: "true" },
       { weeklyProxyUsd: { low: 20, central: 10, high: 30 } },
     ])
       expect(
-        () => new ModelBudget(":memory:", { ...config, ...override }),
+        () =>
+          new ModelBudget(":memory:", {
+            ...config,
+            ...override,
+          } as unknown as ModelBudgetConfig),
       ).toThrow("invalid-model-budget");
     const minimal = {
       ...config,

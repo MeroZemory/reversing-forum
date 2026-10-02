@@ -11,7 +11,37 @@ import {
   stopCodexProcess,
   relativeSegmentStarts,
   scopedOutputSchema,
+  batchReasoningEffort,
+  batchModelAllocation,
 } from "../../src/server/chat-pipeline/relative-context";
+
+it("only sparse context recovery increases Luna effort; normal scans and Sol review keep their routing", () => {
+  expect(batchReasoningEffort("candidate", { blocks: [{}] })).toBe("high");
+  expect(
+    batchReasoningEffort("candidate", { blocks: [{ targetIds: [1, 5] }] }),
+  ).toBe("max");
+  expect(batchReasoningEffort("candidate", { blocks: [] })).toBe("high");
+  expect(batchReasoningEffort("draft", {})).toBe("max");
+  expect(batchReasoningEffort("review", {})).toBe("xhigh");
+});
+
+it("explicit Sol repair is limited to unresolved target inputs and leaves final review routing intact", () => {
+  const input = { blocks: [{ targetIds: [2, 7] }] };
+  expect(batchModelAllocation("candidate", input, true)).toEqual({
+    model: "gpt-6.1-sol",
+    effort: "medium",
+  });
+  expect(() =>
+    batchModelAllocation("candidate", { blocks: [{}] }, true),
+  ).toThrow("invalid-context-repair-mode");
+  expect(() => batchModelAllocation("review", input, true)).toThrow(
+    "invalid-context-repair-mode",
+  );
+  expect(batchModelAllocation("review", input)).toEqual({
+    model: "gpt-6.1-sol",
+    effort: "xhigh",
+  });
+});
 
 function fixture() {
   const db = new Database(":memory:");

@@ -49,7 +49,16 @@ type Call = {
 
 // Exercise the actual CLI in an isolated directory. The preload replaces all
 // HTTP; neither the app server nor any screening/model service is contacted.
-function run(existing: Existing, command = "publish", publishStatus = 200) {
+function run(
+  existing: Existing,
+  command = "publish",
+  publishStatus = 200,
+  overrides: {
+    bundle?: Record<string, unknown>;
+    entry?: Record<string, unknown>;
+    verdict?: Record<string, unknown>;
+  } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "publish-editorial-synthetic-"));
   try {
     const directory = join(root, "data/chat-pipeline");
@@ -67,14 +76,18 @@ function run(existing: Existing, command = "publish", publishStatus = 200) {
     });
     write("bundle.json", {
       ...versions,
+      qualityPolicyVersion: "reusable-technical-knowledge-v2",
       processingRecord: "processing.json",
+      ...overrides.bundle,
       entries: [
         {
           candidateKey: "synthetic-candidate",
+          needsContext: false,
           sourceAliases: ["synthetic-alias"],
           publicData,
           evidenceIds: ["synthetic-evidence"],
           reviewId: "synthetic-review",
+          ...overrides.entry,
         },
       ],
     });
@@ -86,7 +99,14 @@ function run(existing: Existing, command = "publish", publishStatus = 200) {
           candidateKey: "synthetic-candidate",
           publicHash,
           passed: true,
+          quality: true,
+          qualityPolicyVersion: "reusable-technical-knowledge-v2",
+          meaning: true,
+          privacy: true,
+          rights: true,
+          externalTransfer: true,
           referenceId: "synthetic-review",
+          ...overrides.verdict,
         },
       ],
     });
@@ -193,6 +213,34 @@ globalThis.fetch = async (url, options = {}) => {
   }
 }
 
+it.each([
+  { bundle: { qualityPolicyVersion: undefined } },
+  { bundle: { qualityPolicyVersion: "old-policy" } },
+  { verdict: { qualityPolicyVersion: undefined } },
+  { verdict: { qualityPolicyVersion: "old-policy" } },
+  { verdict: { quality: undefined } },
+  { verdict: { quality: false } },
+  { verdict: { publicHash: "different-snapshot" } },
+  { verdict: { meaning: undefined } },
+  { verdict: { privacy: false } },
+  { verdict: { rights: false } },
+  { verdict: { externalTransfer: false } },
+  { entry: { needsContext: true } },
+  { entry: { needsContext: undefined } },
+])(
+  "holds invalid quality approval %j before accessing the candidate",
+  (overrides) => {
+    const result = run({}, "publish", 200, overrides);
+    expect(result.failed).toBe(false);
+    expect(result.actions).toEqual(["basis"]);
+    expect(result.receipt).toMatchObject({
+      ingested: 0,
+      published: 0,
+      held: 1,
+    });
+  },
+);
+
 it.each(["pending", "uncertain", null])(
   "retries an unchanged approved %s snapshot without revision, review, or approval",
   (screeningStatus) => {
@@ -275,6 +323,30 @@ it.each([
     expect(result.receipt).toMatchObject({ published: 1, held: 0, errors: 0 });
   },
 );
+
+it("restores a staff quality hold only through a fresh reviewed revision", () => {
+  const result = run({
+    state: "held",
+    screeningStatus: null,
+    post: { id: "synthetic-post", status: "held" },
+  });
+  expect(result.failed).toBe(false);
+  expect(result.actions).toEqual([
+    "basis",
+    undefined,
+    "revise",
+    "review",
+    "approve",
+    "publish",
+    "snapshot",
+  ]);
+  expect(result.calls[2].data).toMatchObject({
+    action: "revise",
+    revision: 7,
+    draft: { revision: 8 },
+  });
+  expect(result.receipt).toMatchObject({ published: 1, held: 0, errors: 0 });
+});
 
 it("reports the server retry limit conflict without resetting approval or attempts", () => {
   const result = run({ screeningStatus: "uncertain" }, "publish", 409);

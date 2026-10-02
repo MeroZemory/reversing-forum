@@ -561,7 +561,7 @@ export class ChatJobStore {
           throw new Error("out-of-scope-context-recovery-evidence");
         return batch.input.messages[n].id;
       };
-      const candidates = value.candidates.map((c) => {
+      const allCandidates = value.candidates.map((c) => {
         const candidate = exact(
           c,
           [
@@ -583,7 +583,8 @@ export class ChatJobStore {
         if (
           ![...candidate.questionIds, ...candidate.responseIds].some((n) =>
             targets.has(n),
-          )
+          ) &&
+          candidate.needsContext !== true
         )
           throw new Error("unrelated-context-recovery-candidate");
         return {
@@ -591,6 +592,32 @@ export class ChatJobStore {
           questionIds: candidate.questionIds.map((n) => id(n)),
           responseIds: candidate.responseIds.map((n) => id(n)),
         } as BatchCandidate;
+      });
+      // Validate even observations outside the requested target set. Only
+      // unresolved observations entirely in supplied neighbors may be deferred.
+      validateBatchOutput(
+        JSON.stringify({
+          batchId: batch.batchId,
+          inputHash: batch.inputHash,
+          complete: true,
+          candidates: allCandidates,
+        }),
+        {
+          ...batch,
+          maxOutputBytes: 500_000,
+          input: {
+            ...batch.input,
+            messages: block.messages.map((m) => batch.input.messages[m[0]]),
+          },
+        },
+      );
+      const deferredContextCandidates: BatchCandidate[] = [];
+      const candidates = allCandidates.filter((c) => {
+        const relevant = [...c.questionIds, ...c.responseIds].some((id) =>
+          targetMessageIds.has(id),
+        );
+        if (!relevant) deferredContextCandidates.push(c);
+        return relevant;
       });
       const dispositions: NonNullable<BatchOutput["dispositions"]> = [];
       for (const range of value.noncandidateRanges) {
@@ -693,6 +720,7 @@ export class ChatJobStore {
           JSON.stringify({
             output,
             redundantUnresolvedIds,
+            deferredContextCandidates,
             targetIds: block.targetIds.map((n) => id(n)),
           }),
         );

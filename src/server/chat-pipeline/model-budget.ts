@@ -146,6 +146,8 @@ export interface ModelUsage {
 // not a calendar-week guess. No official subscription denominator is assumed.
 export interface ModelBudgetConfig {
   accountId: string;
+  // User-authorized credit use is still bounded by this batch's own ledger.
+  allowCreditUsage?: boolean;
   parentThreadId?: string;
   weekStart?: string;
   weekEnd?: string;
@@ -176,6 +178,8 @@ export function validateModelBudget(
   const r = config.reservation;
   if (
     !config.accountId ||
+    (config.allowCreditUsage !== undefined &&
+      typeof config.allowCreditUsage !== "boolean") ||
     !(config.source?.trim() || config.sources?.length) ||
     !config.method?.trim() ||
     (config.creditsPerProxyUsd !== undefined &&
@@ -248,6 +252,7 @@ export function reservationProxyUsd(
   config: ModelBudgetConfig,
   mode: BatchMode,
   prompt: string,
+  model: BudgetModel = mode === "review" ? "gpt-6.1-sol" : "gpt-6-luna",
 ): number {
   validateModelBudget(config);
   const r = config.reservation;
@@ -258,7 +263,7 @@ export function reservationProxyUsd(
     r?.outputTokens?.[mode] ??
     { candidate: 20_000, draft: 24_000, review: 20_000 }[mode];
   return (
-    usageProxyUsd(mode === "review" ? "gpt-6.1-sol" : "gpt-6-luna", {
+    usageProxyUsd(model, {
       inputTokens: input,
       cachedInputTokens: 0,
       outputTokens: output,
@@ -266,17 +271,30 @@ export function reservationProxyUsd(
   );
 }
 export function accountAvailable(
-  active: { id?: string; quota?: { weeklyPercent?: unknown } } | undefined,
+  active:
+    | {
+        id?: string;
+        paused?: boolean;
+        needsReauth?: boolean;
+        quota?: { weeklyPercent?: unknown };
+      }
+    | undefined,
   accountId: string,
+  allowCreditUsage = false,
 ): boolean {
   const used = active?.quota?.weeklyPercent;
-  // Global quota is availability only. Its delta never enters this ledger.
+  // A full subscription window does not prove that a credit-backed request
+  // will fail. With explicit authorization, let the provider decide; keep
+  // account identity, authentication and the independent batch cap enforced.
   return (
     active?.id === accountId &&
+    active.paused !== true &&
+    active.needsReauth !== true &&
     typeof used === "number" &&
     Number.isFinite(used) &&
     used >= 0 &&
-    used < 100
+    used <= 100 &&
+    (used < 100 || allowCreditUsage === true)
   );
 }
 

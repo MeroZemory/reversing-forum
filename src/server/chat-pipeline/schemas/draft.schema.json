@@ -16,6 +16,7 @@
             "maxItems": 4
           },
           "ready": { "type": "boolean" },
+          "quality": { "type": "boolean" },
           "reasons": {
             "type": "array",
             "items": { "type": "string", "maxLength": 500 },
@@ -28,7 +29,8 @@
           "body",
           "tags",
           "ready",
-          "reasons"
+          "reasons",
+          "quality"
         ],
         "additionalProperties": false
       },

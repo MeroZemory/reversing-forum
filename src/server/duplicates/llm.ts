@@ -355,6 +355,7 @@ async function account(
   env: NodeJS.ProcessEnv,
   accountId: string,
   directory: string,
+  allowCreditUsage = false,
 ) {
   const stdout = await new Promise<string>((done, reject) => {
     execFile(
@@ -374,7 +375,10 @@ async function account(
   const data: unknown = JSON.parse(stdout);
   if (!object(data) || !Array.isArray(data.accounts)) return false;
   const active = data.accounts.filter((a) => object(a) && a.active === true);
-  return active.length === 1 && accountAvailable(active[0], accountId);
+  return (
+    active.length === 1 &&
+    accountAvailable(active[0], accountId, allowCreditUsage)
+  );
 }
 
 async function isolatedCatalog(
@@ -752,7 +756,15 @@ export async function judgeWithLlm(
       return uncertain();
     }
     receipt.stage = "account-before";
-    if (!(await account(ocx, env, config.accountId, directory))) {
+    if (
+      !(await account(
+        ocx,
+        env,
+        config.accountId,
+        directory,
+        config.allowCreditUsage,
+      ))
+    ) {
       receipt.diagnosticCodes = ["account-unavailable-or-changed"];
       return uncertain();
     }
@@ -916,7 +928,13 @@ export async function judgeWithLlm(
     if (
       result.failed ||
       result.code !== 0 ||
-      !(await account(ocx, env, config.accountId, directory))
+      !(await account(
+        ocx,
+        env,
+        config.accountId,
+        directory,
+        config.allowCreditUsage,
+      ))
     )
       return uncertain();
     const settled = ledger.settle(

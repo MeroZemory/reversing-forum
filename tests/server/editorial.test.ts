@@ -475,6 +475,36 @@ describe("editorial server gates and privacy", () => {
 });
 
 describe("publication transactions and invalidation", () => {
+  it("holds an unclear public snapshot with an audit and requires a fresh revision to republish", async () => {
+    const published = await action(await approved(), "publish");
+    const held = await action(published, "hold");
+    expect(held.state).toBe("held");
+    expect(held.post?.status).toBe("held");
+    expect(forum.listPosts()).toEqual([]);
+    expect(await action(held, "hold")).toEqual(held);
+    expect(await action(published, "publish")).toEqual(held);
+    expect(screening.run).toHaveBeenCalledTimes(1);
+    expect(
+      db
+        .prepare("SELECT count(*) n FROM editorial_audit WHERE action='hold'")
+        .get(),
+    ).toEqual({ n: 1 });
+    context.headers = new Headers({ cookie: memberCookie });
+    await expect(action(held, "hold")).rejects.toMatchObject({ status: 403 });
+    context.headers = new Headers({ cookie: editorCookie });
+    await expect(
+      action(held, "hold", { hash: "a".repeat(64) }),
+    ).rejects.toMatchObject({ status: 409 });
+    const revised = await action(held, "revise", {
+      draft: input("candidate-1", 2),
+    });
+    const reviewed = await action(revised, "review", { review });
+    const approvedAgain = await action(reviewed, "approve");
+    const restored = await action(approvedAgain, "publish");
+    expect(restored.post?.id).toBe(published.post?.id);
+    expect(restored.post?.status).toBe("published");
+    expect(screening.run).toHaveBeenCalledTimes(2);
+  });
   it("publishes exactly the complete public data and returns the same post after response loss", async () => {
     const a = await approved();
     const p = await action(a, "publish");
@@ -553,7 +583,13 @@ describe("publication transactions and invalidation", () => {
     expect(next.post?.id).toBe(p.post?.id);
     expect(forum.listPosts()).toHaveLength(1);
   });
-  for (const change of ["withdraw", "revise", "basis", "review"] as const) {
+  for (const change of [
+    "withdraw",
+    "revise",
+    "basis",
+    "review",
+    "hold",
+  ] as const) {
     it(`rejects late Jev after ${change}`, async () => {
       const a = await approved();
       const waiting = deferred();

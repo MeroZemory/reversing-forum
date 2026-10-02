@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 // All writes use an actual authenticated server session. No direct post insertion.
+const qualityPolicyVersion = "reusable-technical-knowledge-v2";
 const directory = resolve("data/chat-pipeline");
 type PublicData = {
   title: string;
@@ -18,6 +19,7 @@ type PublicData = {
 type Entry = {
   candidateKey: string;
   sourceAliases: string[];
+  needsContext: boolean;
   publicData: PublicData;
   evidenceIds: string[];
   reviewId: string;
@@ -27,6 +29,7 @@ type Bundle = {
   rightsVersion: string;
   rulesVersion: string;
   processingRecord: string;
+  qualityPolicyVersion: string;
   entries: Entry[];
 };
 type ReviewFile = {
@@ -36,6 +39,12 @@ type ReviewFile = {
     candidateKey: string;
     publicHash: string;
     passed: boolean;
+    quality: boolean;
+    qualityPolicyVersion: string;
+    meaning: boolean;
+    privacy: boolean;
+    rights: boolean;
+    externalTransfer: boolean;
     referenceId: string;
   }[];
 };
@@ -154,7 +163,17 @@ async function main() {
       (r) => r.candidateKey === entry.candidateKey,
     );
     if (
-      !verdict?.passed ||
+      verdict?.passed !== true ||
+      bundle.qualityPolicyVersion !== qualityPolicyVersion ||
+      verdict.qualityPolicyVersion !== qualityPolicyVersion ||
+      verdict.quality !== true ||
+      entry.needsContext !== false ||
+      verdict.meaning !== true ||
+      verdict.privacy !== true ||
+      verdict.rights !== true ||
+      verdict.externalTransfer !== true ||
+      review.entries.filter((r) => r.candidateKey === entry.candidateKey)
+        .length !== 1 ||
       verdict.publicHash !== digest(entry.publicData) ||
       verdict.referenceId !== entry.reviewId ||
       !entry.evidenceIds.length
@@ -211,26 +230,35 @@ async function main() {
         privateEvidence: {
           referenceIds: [...entry.evidenceIds, entry.reviewId],
           checks: {
-            meaning: true,
-            privacy: true,
-            rights: true,
-            externalTransfer: true,
+            meaning: verdict.meaning,
+            privacy: verdict.privacy,
+            rights: verdict.rights,
+            externalTransfer: verdict.externalTransfer,
           },
         },
       };
-      let draft = sameSnapshot
-        ? existing
-        : existing
-          ? await call(`/api/editorial/${entry.candidateKey}`, {
-              action: "revise",
-              revision: existing.revision,
-              hash: existing.hash,
-              basisVersion: existing.basisVersion,
-              rightsVersion: existing.rightsVersion,
-              rulesVersion: existing.rulesVersion,
-              draft: input,
-            })
-          : await call("/api/editorial", { action: "ingest", ...input });
+      // A staff quality hold invalidates an already published revision. Its
+      // publication receipt must keep returning held, so only a newly reviewed
+      // revision can restore it. A confirmed screening rejection was excluded
+      // above and must never gain retries through this branch.
+      const needsFreshRevision =
+        existing?.state === "held" &&
+        existing.post?.status === "held" &&
+        existing.screeningStatus == null;
+      let draft =
+        sameSnapshot && !needsFreshRevision
+          ? existing
+          : existing
+            ? await call(`/api/editorial/${entry.candidateKey}`, {
+                action: "revise",
+                revision: existing.revision,
+                hash: existing.hash,
+                basisVersion: existing.basisVersion,
+                rightsVersion: existing.rightsVersion,
+                rulesVersion: existing.rulesVersion,
+                draft: input,
+              })
+            : await call("/api/editorial", { action: "ingest", ...input });
       ingested++;
       if (
         command === "publish" &&
@@ -254,10 +282,10 @@ async function main() {
               referenceId: entry.reviewId,
               compared: true,
               checks: {
-                meaning: true,
-                privacy: true,
-                rights: true,
-                externalTransfer: true,
+                meaning: verdict.meaning,
+                privacy: verdict.privacy,
+                rights: verdict.rights,
+                externalTransfer: verdict.externalTransfer,
               },
             },
           });

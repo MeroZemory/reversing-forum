@@ -7,6 +7,41 @@ const rule =
 const instructions =
   "인접 발언이나 같은 구간이라는 이유로 reply 관계를 추정하지 마세요. 서로 다른 주제의 답변과 주변 context를 섞지 마세요. 후보 증거 목록은 숫자 범위를 통째로 잡지 말고 해당 논점의 발언을 선별하세요. 구간·블록 경계의 맥락이나 응답 관계가 불명확하면 needsContext를 true로 표시하세요. segmentStarts는 각 블록의 원래 숫자 인덱스입니다.";
 
+export function batchReasoningEffort(
+  mode: "candidate" | "draft" | "review",
+  input: { blocks?: Array<{ targetIds?: unknown }> },
+): "high" | "max" | "xhigh" {
+  if (mode === "review") return "xhigh";
+  if (mode === "draft") return "max";
+  // Recovering an unresolved, sparse evidence window requires more reasoning
+  // than the first full-batch scan; both still use the same Luna model.
+  return input.blocks?.length &&
+    input.blocks.every((b) => Array.isArray(b.targetIds))
+    ? "max"
+    : "high";
+}
+
+export function batchModelAllocation(
+  mode: "candidate" | "draft" | "review",
+  input: { blocks?: Array<{ targetIds?: unknown }> },
+  contextRepair = false,
+) {
+  if (contextRepair) {
+    if (
+      mode !== "candidate" ||
+      !input.blocks?.length ||
+      !input.blocks.every((b) => Array.isArray(b.targetIds))
+    )
+      throw new Error("invalid-context-repair-mode");
+    return { model: "gpt-6.1-sol" as const, effort: "medium" as const };
+  }
+  return {
+    model:
+      mode === "review" ? ("gpt-6.1-sol" as const) : ("gpt-6-luna" as const),
+    effort: batchReasoningEffort(mode, input),
+  };
+}
+
 export type RelativeContextRow = {
   index: number;
   local: unknown;

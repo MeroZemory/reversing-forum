@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
-  copyFileSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -12,6 +11,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { stopCodexProcess } from "../src/server/chat-pipeline/relative-context";
 import { quarantineValidationCodes } from "./chat-native-batches";
+import { runCandidateShards } from "./chat-candidate-shards";
 
 type Json = Record<string, any>;
 type Phase = "candidate" | "draft" | "publish" | "all";
@@ -27,6 +27,7 @@ export type Runner = (
 export type Options = {
   phase: Phase;
   concurrency: number;
+  candidateShardBlocks?: number;
   limitPackets?: number;
   publishEnvFile?: boolean;
   repairRelevant?: boolean;
@@ -70,6 +71,11 @@ const failureScripts = new Set([
 ]);
 // Only fixed diagnostic labels leave child output; arbitrary a-z text is not safe.
 const failureCodes = new Set([
+  "invalid-candidate-shard-limit",
+  "candidate-shard-input-invalid",
+  "candidate-shard-cache-invalid",
+  "candidate-shard-output-invalid",
+  "candidate-shard-source-changed",
   "runner-failed",
   "runner-aborted",
   "codex-process-tree-stop-failed",
@@ -253,7 +259,12 @@ export function parseOptions(args: string[]): Options {
       phase === "candidate"
     )
       options.separateCandidateProgress = true;
-    else if (args[i] === "--concurrency" || args[i] === "--limit-packets") {
+    else if (args[i] === "--candidate-shard-blocks") {
+      const value = Number(args[++i]);
+      if (!Number.isSafeInteger(value) || value < 1 || value > 6)
+        throw new Error("invalid-candidate-shard-limit");
+      options.candidateShardBlocks = value;
+    } else if (args[i] === "--concurrency" || args[i] === "--limit-packets") {
       const key = args[i] === "--concurrency" ? "concurrency" : "limitPackets";
       const value = Number(args[++i]);
       if (
@@ -270,7 +281,7 @@ export function parseOptions(args: string[]): Options {
 
 // The CLI schemas use only this small JSON Schema subset. Fail closed on
 // unknown constraints rather than silently accepting a new schema dialect.
-function validate(value: any, schema: Json): void {
+export function validate(value: any, schema: Json): void {
   const supported = new Set([
     "type",
     "properties",
@@ -283,12 +294,24 @@ function validate(value: any, schema: Json): void {
     "maxLength",
     "minimum",
     "maximum",
+    "enum",
   ]);
   if (Object.keys(schema).some((key) => !supported.has(key)))
     throw new Error("unsupported-output-schema");
   const fail = () => {
     throw new Error("invalid-existing-output");
   };
+  if (schema.enum !== undefined) {
+    if (
+      !Array.isArray(schema.enum) ||
+      !schema.enum.length ||
+      !schema.enum.every((item: unknown) =>
+        ["string", "number", "boolean"].includes(typeof item),
+      )
+    )
+      throw new Error("unsupported-output-schema");
+    if (!schema.enum.includes(value)) fail();
+  }
   if (schema.type === "object") {
     if (!value || typeof value !== "object" || Array.isArray(value)) fail();
     if (schema.required?.some((key: string) => !(key in value))) fail();
@@ -329,6 +352,13 @@ export async function runCorpus(
   runner: Runner = nodeRunner,
 ): Promise<{ code: number; progress: Progress }> {
   if (
+    options.candidateShardBlocks !== undefined &&
+    (!Number.isSafeInteger(options.candidateShardBlocks) ||
+      options.candidateShardBlocks < 1 ||
+      options.candidateShardBlocks > 6)
+  )
+    throw new Error("invalid-candidate-shard-limit");
+  if (
     !Number.isInteger(options.concurrency) ||
     options.concurrency < 1 ||
     options.concurrency > 4 ||
@@ -342,11 +372,15 @@ export async function runCorpus(
   mkdirSync(schemaDirectory, { recursive: true });
   for (const mode of ["candidate", "draft", "review"]) {
     const local = join(schemaDirectory, `${mode}.schema.json`);
-    if (!existsSync(local))
-      copyFileSync(
-        join(root, "src/server/chat-pipeline/schemas", `${mode}.schema.json`),
-        local,
-      );
+    const current = readFileSync(
+      join(root, "src/server/chat-pipeline/schemas", `${mode}.schema.json`),
+      "utf8",
+    );
+    if (!existsSync(local) || readFileSync(local, "utf8") !== current) {
+      const temp = `${local}.${randomUUID()}.tmp`;
+      writeFileSync(temp, current, { mode: 0o600, flag: "wx" });
+      renameSync(temp, local);
+    }
   }
   const progressPath = join(
     directory,
@@ -607,6 +641,19 @@ export async function runCorpus(
         writeFileSync(output, JSON.stringify({ complete: true, entries: [] }), {
           flag: "wx",
           mode: 0o600,
+        });
+      else if (
+        mode === "candidate" &&
+        options.candidateShardBlocks !== undefined
+      )
+        await runCandidateShards({
+          input,
+          output,
+          schema,
+          blocksPerShard: options.candidateShardBlocks,
+          cacheDirectory: join(directory, "candidate-shards"),
+          invoke: (args) => invoke("chat-codex-run.ts", args),
+          validate: (value, template) => validate(value, template),
         });
       else await invoke("chat-codex-run.ts", [mode, input, output, schema]);
     }

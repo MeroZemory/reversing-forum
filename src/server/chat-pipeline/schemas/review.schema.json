@@ -10,6 +10,11 @@
           "candidateKey": { "type": "string", "maxLength": 64 },
           "publicHash": { "type": "string", "maxLength": 64 },
           "passed": { "type": "boolean" },
+          "quality": { "type": "boolean" },
+          "qualityPolicyVersion": {
+            "type": "string",
+            "enum": ["reusable-technical-knowledge-v2"]
+          },
           "meaning": { "type": "boolean" },
           "privacy": { "type": "boolean" },
           "rights": { "type": "boolean" },
@@ -28,7 +33,9 @@
           "privacy",
           "rights",
           "externalTransfer",
-          "reasons"
+          "reasons",
+          "quality",
+          "qualityPolicyVersion"
         ],
         "additionalProperties": false
       },

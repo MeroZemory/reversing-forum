@@ -14,9 +14,14 @@ import {
   codexPrompt,
   stopCodexProcess,
   scopedOutputSchema,
+  batchModelAllocation,
 } from "../src/server/chat-pipeline/relative-context";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
+import {
+  batchCliEnvironment,
+  isolatedBatchCatalog,
+} from "../src/server/chat-pipeline/cli-model-catalog";
 import {
   ModelBudget,
   CodexUsageCollector,
@@ -67,6 +72,7 @@ const ledger = new ModelBudget(
   allocation,
 );
 const execute = promisify(execFile);
+const env = batchCliEnvironment();
 async function activeAccount() {
   const { stdout } = await execute(
     process.execPath,
@@ -76,6 +82,7 @@ async function activeAccount() {
       encoding: "utf8",
       timeout: 30_000,
       maxBuffer: 1_000_000,
+      env,
     },
   );
   return JSON.parse(stdout).accounts.find((a: { active: boolean }) => a.active);
@@ -118,11 +125,18 @@ async function mcpOverrides(): Promise<string[]> {
     `mcp_servers.${name}.enabled=false`,
   ]);
 }
-const model = mode === "review" ? "gpt-6.1-sol" : "gpt-6-luna";
-const effort =
-  mode === "candidate" ? "high" : mode === "draft" ? "max" : "xhigh";
 const source = readFileSync(inputPath, "utf8");
 const sourceInput = JSON.parse(source);
+if (
+  process.argv.length > 7 ||
+  (process.argv[6] && process.argv[6] !== "--context-repair")
+)
+  throw new Error("invalid-context-repair-mode");
+const { model, effort } = batchModelAllocation(
+  mode,
+  sourceInput,
+  process.argv[6] === "--context-repair",
+);
 const actualSchema = scopedOutputSchema(
   JSON.parse(readFileSync(schemaPath, "utf8")),
   sourceInput,
@@ -162,9 +176,17 @@ const {
   actualPromptHash,
 } = codexPrompt(source, context);
 try {
-  const overrides = await mcpOverrides();
+  const catalog = await isolatedBatchCatalog(
+    codexEntry,
+    directory,
+    env,
+    model,
+    effort,
+  );
   const active = await activeAccount();
-  if (!accountAvailable(active, allocation.accountId)) {
+  if (
+    !accountAvailable(active, allocation.accountId, allocation.allowCreditUsage)
+  ) {
     console.log(
       JSON.stringify({
         started: false,
@@ -173,7 +195,26 @@ try {
     );
     process.exitCode = 2;
   } else {
-    const reservedProxyUsd = reservationProxyUsd(allocation, mode, prompt);
+    const reservedProxyUsd = reservationProxyUsd(
+      {
+        ...allocation,
+        reservation: {
+          ...allocation.reservation,
+          promptBytesPerToken: 1,
+          extraInputTokens: Math.max(
+            4096,
+            allocation.reservation?.extraInputTokens ?? 0,
+          ),
+          safetyFactor: Math.max(
+            1.5,
+            allocation.reservation?.safetyFactor ?? 0,
+          ),
+        },
+      },
+      mode,
+      prompt + actualSchemaText + " ".repeat(catalog.inputBytes),
+      model,
+    );
     const parentThreadId =
       process.env.MAIN_THREAD_ID ||
       allocation.parentThreadId ||
@@ -220,8 +261,19 @@ try {
           "--sandbox",
           "read-only",
           "--skip-git-repo-check",
+          "--ignore-user-config",
+          "--ignore-rules",
           ...disabled.flatMap((feature) => ["--disable", feature]),
-          ...overrides,
+          "-c",
+          "features.code_mode=false",
+          "-c",
+          "features.code_mode_host=false",
+          "-c",
+          "features.code_mode_only=false",
+          "-c",
+          `model_catalog_json=${JSON.stringify(catalog.path)}`,
+          "-c",
+          "mcp_servers={}",
           "-c",
           'web_search="disabled"',
           "--model",
@@ -238,7 +290,12 @@ try {
           "never",
           "-",
         ],
-        { cwd: directory, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
+        {
+          cwd: directory,
+          env,
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+        },
       );
       const collector = new CodexUsageCollector();
       const lines = createInterface({
@@ -283,7 +340,13 @@ try {
         checking = true;
         pendingCheck = activeAccount()
           .then((account) => {
-            if (!accountAvailable(account, allocation.accountId)) {
+            if (
+              !accountAvailable(
+                account,
+                allocation.accountId,
+                allocation.allowCreditUsage,
+              )
+            ) {
               stop();
             }
           })
@@ -308,7 +371,13 @@ try {
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
       try {
-        if (!accountAvailable(await activeAccount(), allocation.accountId))
+        if (
+          !accountAvailable(
+            await activeAccount(),
+            allocation.accountId,
+            allocation.allowCreditUsage,
+          )
+        )
           stopped = true;
       } catch {
         stopped = true;
@@ -332,6 +401,9 @@ try {
         inputHash: hash,
         actualPromptHash,
         actualSchemaHash,
+        actualSchemaBytes: Buffer.byteLength(actualSchemaText),
+        modelCatalogHash: catalog.hash,
+        modelCatalogBytes: catalog.inputBytes,
         usage,
         reservedProxyUsd,
         settled,

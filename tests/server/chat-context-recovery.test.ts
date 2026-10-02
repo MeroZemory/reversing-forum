@@ -324,6 +324,68 @@ it.each(["resolved", "noncandidate", "duplicate-context"])(
   },
 );
 
+it("주변 문맥에만 있는 미해결 관찰은 비공개로 보존하고 후보로 가져오지 않는다", () => {
+  const f = fixture();
+  complete(f);
+  const [input] = f.store.listContextRecoveryInputs();
+  const raw = output(input, {
+    candidates: [
+      {
+        localId: "neighbor",
+        title: "주변 문맥의 질문",
+        topic: "분석",
+        questionIds: [1],
+        responseIds: [],
+        uncertainties: [],
+        needsContext: true,
+      },
+    ],
+  });
+  expect(f.store.importContextRecovery(input, raw).imported).toBe(0);
+  expect(f.store.listCandidates()).toHaveLength(0);
+  expect(f.store.summary().messageDispositions).toMatchObject({
+    needsContext: 1,
+    noncandidate: 6,
+  });
+  const db = new Database(join(f.store.directory, "jobs.sqlite"), {
+    readonly: true,
+  });
+  try {
+    const row = db
+      .prepare("SELECT raw_output,record FROM context_recoveries")
+      .get() as { raw_output: string; record: string };
+    expect(row.raw_output).toBe(raw);
+    expect(JSON.parse(row.record).deferredContextCandidates).toHaveLength(1);
+    expect(JSON.parse(row.record).output.candidates).toHaveLength(0);
+  } finally {
+    db.close();
+  }
+});
+
+it.each(["resolved", "outside", "invalid-metadata"])(
+  "주변 관찰의 %s 결과로 대상 검증을 우회할 수 없다",
+  (kind) => {
+    const f = fixture();
+    complete(f);
+    const [input] = f.store.listContextRecoveryInputs();
+    const raw = output(input, {
+      candidates: [
+        {
+          localId: "neighbor",
+          title: kind === "invalid-metadata" ? "" : "합성 분석",
+          topic: "분석",
+          questionIds: [kind === "outside" ? 0 : 1],
+          responseIds: [],
+          uncertainties: [],
+          needsContext: kind !== "resolved",
+        },
+      ],
+    });
+    expect(() => f.store.importContextRecovery(input, raw)).toThrow();
+    expect(f.store.summary().messageDispositions.needsContext).toBe(1);
+  },
+);
+
 it("unknown/API 오류/불완전 결과는 저장하지 않고 unresolved를 유지한다", () => {
   const f = fixture();
   complete(f);

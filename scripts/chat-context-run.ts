@@ -21,6 +21,7 @@ import { nodeRunner, type Runner } from "./chat-corpus-run";
 type Options = {
   concurrency: number;
   retryInvalidOutput?: number;
+  solRepair?: boolean;
   limitPackets?: number;
   root?: string;
   signal?: AbortSignal;
@@ -67,6 +68,7 @@ const codes = new Set([
   "rate-limit",
   "model-unavailable",
   "invalid-context-run-options",
+  "invalid-context-repair-mode",
   "invalid-context-run-progress",
   "invalid-context-run-manifest",
   "context-run-manifest-hash-mismatch",
@@ -212,9 +214,10 @@ function outputScope(input: ContextRecoveryInput, raw: string): Output {
         ![...candidate.questionIds, ...candidate.responseIds].every((n) =>
           valid(n),
         ) ||
-        ![...candidate.questionIds, ...candidate.responseIds].some((n) =>
-          targets.has(n),
-        )
+        (!candidate.needsContext &&
+          ![...candidate.questionIds, ...candidate.responseIds].some((n) =>
+            targets.has(n),
+          ))
       )
         throw new Error("invalid-context-run-output");
       for (const n of [...candidate.questionIds, ...candidate.responseIds]) {
@@ -265,6 +268,8 @@ export function parseContextOptions(args: string[]): Options {
     else if (args[i] === "--limit-packets") options.limitPackets = value;
     else if (args[i] === "--retry-invalid-output" && value <= 2)
       options.retryInvalidOutput = value;
+    else if (args[i] === "--sol-repair" && value === 1)
+      options.solRepair = true;
     else throw new Error("invalid-context-run-options");
   }
   return options;
@@ -460,6 +465,7 @@ export async function runContext(
                     inputFile,
                     outputFile,
                     schema,
+                    ...(options.solRepair ? ["--context-repair"] : []),
                   ]);
                 }
                 inputSnapshot(directory, entry);
@@ -497,8 +503,14 @@ export async function runContext(
                   outputFile,
                 ]);
                 const receipt = json(stdout.trim().split(/\r?\n/).at(-1) ?? "");
-                const candidates = validOutput.blocks.flatMap(
-                  (b) => b.candidates,
+                const candidates = validOutput.blocks.flatMap((b) =>
+                  b.candidates.filter((c) =>
+                    [...c.questionIds, ...c.responseIds].some((n) =>
+                      input.blocks
+                        .find((v) => v.batchId === b.batchId)!
+                        .targetIds.includes(n),
+                    ),
+                  ),
                 );
                 if (
                   receipt?.recoveryId !== entry.packetId ||

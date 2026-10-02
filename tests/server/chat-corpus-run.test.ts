@@ -16,6 +16,7 @@ import {
   nodeRunner,
   createNodeRunner,
   parseOptions,
+  validate,
   runCorpus,
   type Launch,
   type Runner,
@@ -81,6 +82,120 @@ const candidateOutput = (packetId: string) => ({
       contextIds: [],
     },
   ],
+});
+
+it("rejects a stale quality-policy enum before a cached output can be reused", () => {
+  const schema = { type: "string", enum: ["reusable-technical-knowledge-v2"] };
+  expect(() =>
+    validate("reusable-technical-knowledge-v2", schema),
+  ).not.toThrow();
+  expect(() => validate("self-contained-technical-v1", schema)).toThrow(
+    "invalid-existing-output",
+  );
+  expect(() => validate("anything", { type: "string", enum: [] })).toThrow(
+    "unsupported-output-schema",
+  );
+});
+describe("optional candidate shard routing", () => {
+  it("parses 1..6 blocks and rejects invalid values without changing defaults", () => {
+    expect(parseOptions(["candidate"]).candidateShardBlocks).toBeUndefined();
+    for (const n of [1, 2, 6])
+      expect(
+        parseOptions(["all", "--candidate-shard-blocks", String(n)])
+          .candidateShardBlocks,
+      ).toBe(n);
+    for (const n of ["0", "7", "1.5", "NaN", ""])
+      expect(() =>
+        parseOptions(["candidate", "--candidate-shard-blocks", n]),
+      ).toThrow("invalid-candidate-shard-limit");
+  });
+
+  it("runs real candidate command per child and imports only the combined original packet", async () => {
+    const { root, packets } = fixture(1);
+    const source = read(packets[0].file);
+    source.instructions = ["Synthetic instructions"];
+    source.blocks = Array.from({ length: 5 }, (_, n) => ({
+      ...source.blocks[0],
+      batchId: id(n + 10),
+    }));
+    write(packets[0].file, source);
+    const calls: Launch[] = [];
+    const runner: Runner = async (launch) => {
+      calls.push(launch);
+      const { script, args } = command(launch);
+      if (script === "chat-codex-run.ts") {
+        const child = read(args[1]);
+        write(args[2], {
+          packetId: child.packetId,
+          complete: true,
+          blocks: child.blocks.map((b: any) => ({
+            ...candidateOutput(child.packetId).blocks[0],
+            batchId: b.batchId,
+          })),
+        });
+      }
+      return { code: 0 };
+    };
+    const result = await runCorpus(
+      { root, phase: "candidate", concurrency: 2, candidateShardBlocks: 2 },
+      runner,
+    );
+    expect(result.code).toBe(0);
+    const models = calls
+      .map(command)
+      .filter((c) => c.script === "chat-codex-run.ts");
+    expect(models.map((c) => read(c.args[1]).blocks.length)).toEqual([2, 2, 1]);
+    const imports = calls
+      .map(command)
+      .filter((c) => c.script === "chat-native-batches.ts");
+    expect(imports).toHaveLength(1);
+    expect(read(imports[0].args[1]).blocks.map((b: any) => b.batchId)).toEqual(
+      source.blocks.map((b: any) => b.batchId),
+    );
+  });
+
+  it.each([
+    "malformed",
+    "account-unavailable-or-changed",
+    "batch-proxy-budget-boundary",
+  ])(
+    "stops %s without import or quarantine even when quarantine is requested",
+    async (failure) => {
+      const { root } = fixture(1);
+      const calls: Launch[] = [];
+      const result = await runCorpus(
+        {
+          root,
+          phase: "candidate",
+          concurrency: 1,
+          candidateShardBlocks: 2,
+          quarantineInvalidCandidates: true,
+        },
+        async (launch) => {
+          calls.push(launch);
+          const { args } = command(launch);
+          if (failure === "malformed") {
+            write(args[2], { complete: true });
+            return { code: 0 };
+          }
+          return { code: 1, errorCode: failure };
+        },
+      );
+      expect(result.code).toBe(1);
+      expect(
+        calls.map(command).every((c) => c.script === "chat-codex-run.ts"),
+      ).toBe(true);
+      expect(
+        result.progress.failures?.some(
+          (f) =>
+            f.errorCode ===
+            (failure === "malformed"
+              ? "candidate-shard-output-invalid"
+              : failure),
+        ),
+      ).toBe(true);
+    },
+  );
 });
 function candidateRunner(calls: Launch[]): Runner {
   return async (launch) => {
@@ -1161,6 +1276,7 @@ describe("corpus orchestration boundaries", () => {
                 body: "합성",
                 tags: [],
                 ready: false,
+                quality: false,
                 reasons: ["맥락 확인 필요"],
               },
             ],
@@ -1280,7 +1396,7 @@ describe("corpus orchestration boundaries", () => {
     },
   );
 
-  it("runs draft, independent review, bundle and HTTP publish in order; reports held separately", async () => {
+  it("refreshes legacy private schemas and runs draft, independent review, bundle and publish in order", async () => {
     const { root, directory } = fixture(1);
     const input = join(
       directory,
@@ -1296,6 +1412,17 @@ describe("corpus orchestration boundaries", () => {
     const reviewOutput = reviewInput.replace(".input.json", ".output.json");
     const bundle = join(directory, "editorial-batches", `${id(3)}.bundle.json`);
     const approved = bundle.replace(".bundle.json", ".approved.json");
+    for (const mode of ["draft", "review"]) {
+      const path = join(directory, "schemas", `${mode}.schema.json`);
+      const legacy = read(path);
+      delete legacy.properties.entries.items.properties.quality;
+      delete legacy.properties.entries.items.properties.qualityPolicyVersion;
+      legacy.properties.entries.items.required =
+        legacy.properties.entries.items.required.filter(
+          (key: string) => !["quality", "qualityPolicyVersion"].includes(key),
+        );
+      write(path, legacy);
+    }
     const calls: Launch[] = [];
     const runner: Runner = async (launch) => {
       calls.push(launch);
@@ -1311,6 +1438,7 @@ describe("corpus orchestration boundaries", () => {
                 body: "Synthetic",
                 tags: [],
                 ready: true,
+                quality: true,
                 reasons: [],
               },
             ],
@@ -1323,6 +1451,8 @@ describe("corpus orchestration boundaries", () => {
                 candidateKey: id(4),
                 publicHash: id(5),
                 passed: true,
+                quality: true,
+                qualityPolicyVersion: "reusable-technical-knowledge-v2",
                 meaning: true,
                 privacy: true,
                 rights: true,
@@ -1360,9 +1490,20 @@ describe("corpus orchestration boundaries", () => {
         };
       return { code: 0 };
     };
+    const draftResult = await runCorpus(
+      { root, phase: "draft", concurrency: 2 },
+      runner,
+    );
+    expect(draftResult.progress.failures ?? []).toEqual([]);
+    expect(draftResult.code).toBe(0);
     expect(
-      (await runCorpus({ root, phase: "draft", concurrency: 2 }, runner)).code,
-    ).toBe(0);
+      read(join(directory, "schemas/draft.schema.json")).properties.entries
+        .items.required,
+    ).toContain("quality");
+    expect(
+      read(join(directory, "schemas/review.schema.json")).properties.entries
+        .items.required,
+    ).toContain("qualityPolicyVersion");
     expect(calls.map((call) => command(call).args[0])).toEqual([
       "prepare",
       "draft",

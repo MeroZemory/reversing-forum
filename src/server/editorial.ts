@@ -310,7 +310,7 @@ function gates(d: Draft) {
 function invalidate(
   user: User,
   initial: Draft[],
-  action: "withdraw" | "revise" | "basis",
+  action: "withdraw" | "revise" | "basis" | "hold",
 ) {
   const all = (
     db.prepare("SELECT state FROM editorial_drafts").all() as {
@@ -467,7 +467,7 @@ export async function editorialAction(key: string, value: unknown) {
   ]);
   const action = data.action;
   if (
-    !["review", "approve", "publish", "revise", "withdraw"].includes(
+    !["review", "approve", "publish", "revise", "withdraw", "hold"].includes(
       action as string,
     )
   )
@@ -540,6 +540,11 @@ export async function editorialAction(key: string, value: unknown) {
         }
       }
       expected(d, data);
+      if (action === "hold") {
+        if (d.state !== "held" && d.state !== "withdrawn")
+          invalidate(user, [d], "hold");
+        return preview(load(key, user));
+      }
       if (action === "withdraw") {
         if (d.state !== "withdrawn") invalidate(user, [d], "withdraw");
         return preview(load(key, user));

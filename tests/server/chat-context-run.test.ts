@@ -192,6 +192,24 @@ it("bounds concurrency and packet limits without accepting extra flags", () => {
     );
 });
 
+it("explicit repair passes the bounded Sol flag only to the candidate runner", async () => {
+  const f = fixture(1),
+    calls: Launch[] = [];
+  const result = await runContext(
+    { root: f.root, concurrency: 1, solRepair: true },
+    runnerFor(f, calls),
+  );
+  expect(result.code).toBe(0);
+  expect(
+    calls.find((c) => command(c).script === "chat-codex-run.ts")?.args.at(-1),
+  ).toBe("--context-repair");
+  expect(
+    calls
+      .filter((c) => command(c).script === "chat-context-recovery.ts")
+      .every((c) => !c.args.includes("--context-repair")),
+  ).toBe(true);
+});
+
 it("prepares immutable shards, limits unfinished packets, reuses valid output and never edits candidate progress", async () => {
   const f = fixture(),
     calls: Launch[] = [];
@@ -380,6 +398,43 @@ it("a repeated invalid model result exhausts the bounded retry without import", 
   ).toHaveLength(1);
   expect(calls.filter((c) => command(c).args[0] === "import")).toHaveLength(0);
   expect(read(file)).toEqual(bad);
+});
+
+it("unresolved neighbor-only observations never contribute to candidate or resolved counts", async () => {
+  const f = fixture(1),
+    calls: Launch[] = [],
+    input = f.inputs[0],
+    file = join(f.directory, `${input.packetId}.output.json`);
+  const value = output(input, true);
+  value.blocks[0].candidates[0].questionIds = [118];
+  value.blocks[0].candidates[0].responseIds = [];
+  value.blocks[0].candidates[0].needsContext = true;
+  write(file, value);
+  const base = runnerFor(f, calls);
+  const result = await runContext(
+    { root: f.root, concurrency: 1 },
+    async (launch) => {
+      if (command(launch).args[0] === "import") {
+        calls.push(launch);
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            imported: 0,
+            replay: false,
+            recoveryId: input.packetId,
+          }),
+        };
+      }
+      return base(launch);
+    },
+  );
+  expect(result.code).toBe(0);
+  expect(result.counts).toMatchObject({
+    candidates: 0,
+    needsContext: 2,
+    needsContextCandidates: 0,
+  });
+  expect(read(file)).toEqual(value);
 });
 
 it.each(["manifest", "input", "completed-output"])(
