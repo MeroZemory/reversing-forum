@@ -15,8 +15,8 @@ import { expect, it } from "vitest";
 import { ChatJobStore } from "../../src/server/chat-pipeline/job-store";
 import { SANITIZER_VERSION } from "../../src/server/chat-pipeline/prepare";
 
-const policy = "reusable-technical-knowledge-v2";
-const promptVersion = "editorial-reusable-knowledge-v5";
+const policy = "reusable-technical-knowledge-v3";
+const promptVersion = "editorial-reusable-knowledge-v6";
 const script = fileURLToPath(
   new URL("../../scripts/chat-editorial-batches.ts", import.meta.url),
 );

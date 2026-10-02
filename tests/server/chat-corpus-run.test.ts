@@ -85,9 +85,9 @@ const candidateOutput = (packetId: string) => ({
 });
 
 it("rejects a stale quality-policy enum before a cached output can be reused", () => {
-  const schema = { type: "string", enum: ["reusable-technical-knowledge-v2"] };
+  const schema = { type: "string", enum: ["reusable-technical-knowledge-v3"] };
   expect(() =>
-    validate("reusable-technical-knowledge-v2", schema),
+    validate("reusable-technical-knowledge-v3", schema),
   ).not.toThrow();
   expect(() => validate("self-contained-technical-v1", schema)).toThrow(
     "invalid-existing-output",
@@ -1452,7 +1452,7 @@ describe("corpus orchestration boundaries", () => {
                 publicHash: id(5),
                 passed: true,
                 quality: true,
-                qualityPolicyVersion: "reusable-technical-knowledge-v2",
+                qualityPolicyVersion: "reusable-technical-knowledge-v3",
                 meaning: true,
                 privacy: true,
                 rights: true,

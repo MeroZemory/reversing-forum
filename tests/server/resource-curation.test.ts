@@ -189,7 +189,7 @@ it.each(["new-public", "reused-public", "held", "reused-held", "stale"])(
     };
     const bundle = {
       ...versions,
-      qualityPolicyVersion: "reusable-technical-knowledge-v2",
+      qualityPolicyVersion: "reusable-technical-knowledge-v3",
       processingRecord: "processing.json",
       entries: [
         {
@@ -235,7 +235,7 @@ it.each(["new-public", "reused-public", "held", "reused-held", "stale"])(
               publicHash: draft.hash,
               passed: true,
               quality: true,
-              qualityPolicyVersion: "reusable-technical-knowledge-v2",
+              qualityPolicyVersion: "reusable-technical-knowledge-v3",
               meaning: true,
               privacy: true,
               rights: true,

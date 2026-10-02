@@ -20,7 +20,7 @@ const write = (name: string, value: unknown) => {
   writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
   return path;
 };
-const qualityPolicyVersion = "reusable-technical-knowledge-v2";
+const qualityPolicyVersion = "reusable-technical-knowledge-v3";
 const versions = {
   basisVersion: "nonpersonal-technical-v1",
   rightsVersion: "independent-expression-v1",
@@ -70,12 +70,13 @@ type DraftInput = {
 
 const processingRecord = join(directory, "processing-record.json");
 const qualityInstruction =
+  "후보의 title·topic·uncertainties는 이전 모델이 만든 가공 메타데이터이며 원자료 근거가 아닙니다. 대상 프로그램·도구·원인·결과는 evidence의 기술 내용에서만 확인하세요. 가공 제목에만 있는 ABEX 같은 이름을 원자료의 사실로 취급하거나 본문에 옮기지 마세요. 실제 원자료에 대상이 없고 이해에 그 대상이 필요하면 quality:false입니다. " +
   "글은 대화 이력이 아니라 다시 쓸 기술 지식으로 작성하세요. 원자료가 뒷받침하는 개념·조건·구체적인 방법·한계만 직접 설명하세요. 누가 질문했고 어떤 답이 이어졌는지, 이후 어떤 혼선이나 짧은 확인이 오갔는지는 본문에 넣지 마세요. 설명에 필요 없는 주변 논점·약어 혼동·후속 대화를 제거하세요. 답변이 모호한데 대화 경과와 '확인되지 않았다'는 문구만 남는 글은 quality:false입니다. 예를 들어 인터럽트 스택 상태의 질문 뒤에 MBR 약어 혼선과 문맥 전환 대화를 나열한 글은 보류하세요. 명확한 미해결 질문을 남길 경우에도 필요한 조건과 정확한 질문만 정리하고 잘못되거나 연결이 불명확한 답변을 덧붙이지 마세요. 실제로 검증하지 않은 설명을 사실로 단정하지 말고, 근거가 부족한 결론은 제외하세요. 핵심 지식을 남길 수 없으면 글을 만들지 마세요. 과거 기록 시점과 출처는 별도 메타데이터로 표시하며 매 문장에서 대화였다는 사실을 반복하지 마세요. " +
   "공개 품질은 텍스트만으로 이해되는 명확한 기술 질문·문제 또는 원자료 응답에서 모호함 없이 확인되는 주제에 한정합니다. 의미 이해에 필요한 대상 프로그램·도구가 알려져 있는지, 구체적인 증상·행동·문제 또는 주제가 있는지, 질문과 응답이 같은 논점에 연결되는지, 첨부 없이 공개 텍스트만으로 이해되는지를 각각 평가하세요. 의미 이해에 필요한 대상 프로그램·도구가 불명확하거나 증상·행동이 모호하거나 필수 이미지·첨부가 없거나 추측이 필요하면 quality:false로 보류하세요. 예를 들어 '예외 설정을 바꾸면 프로그램이 실행되지 않는 문제'는 대상이 불명이므로 보류하고 OllyDbg라고 추정하지 마세요. pthread_join의 자원 처리나 DLL 호출 같은 구체적인 개념 주제에는 의미상 불필요한 실행 파일명·버전을 요구하지 마세요. 명확한 질문만 있거나 응답에서 구체적이고 재사용 가능한 설명이 모호함 없이 확인되어도 허용할 수 있습니다. 답변 없는 질문은 구체적으로 활용 가능한 맥락이 명확할 때만 허용합니다. 단순히 영어 PDF·블로그를 검색하라는 말, 불특정 사이트의 악성코드 샘플 안내, 누군가 질문했고 답변은 불명확하다는 내용뿐인 요약은 유용한 기술 질문·설명이 아니므로 보류하세요. 이미지 누락은 텍스트에 질문·주제의 의미가 없고 이미지가 필수일 때 보류 사유입니다. 부분 답변·틀린 답변은 문제와 답변의 범위를 명시하고 원자료로 뒷받침할 때만 허용합니다. needsContext:true인 후보는 통과시킬 수 없습니다. 원자료에 없는 대상·행동·원인·해결·첨부 내용을 만들지 마세요.";
 const instruction =
   qualityInstruction +
   " 전체 후보를 각각 검토하고 공개용 편집 글로 독립적으로 다시 작성하세요. 원문 문장·고유한 코드·표현·개인 경험·닉네임을 복사하지 마세요. 질문의 논점, 제안된 방법, 반박, 해결 여부와 미확인 사항을 구분하세요. 기록에 없는 성공·동의·인물을 만들지 마세요. 현재 기술적 사실을 새로 검증한 것처럼 쓰지 말고 당시 제안임을 밝히세요. 실제 게임의 무허가 부정사용 도구 제작·배포·판매와 특정 서비스의 접근통제 우회 실행법·도구 배포 안내는 보류하세요. 공격 원리의 개념 설명, 방어·탐지·분석 관점과 승인된 연습 문제의 디버깅 개념은 독립 서술할 수 있습니다. 실행 코드나 원본 URL을 옮기지 마세요. title은 검색 가능한 구체적인 논점, body는 독자가 바로 이해할 수 있는 한국어 Markdown, tags는 주제·도구 1~4개입니다. 일본어·한자를 쓰지 마세요. 근거 id와 발언자 별칭은 본문에 넣지 마세요. quality는 위 공개 품질 평가 결과이고 quality:false면 ready:false입니다. 입력에 있는 모든 candidateKey마다 결과를 하나 반환하고 complete는 실제 전체 처리 여부입니다.";
-const promptVersion = "editorial-reusable-knowledge-v5";
+const promptVersion = "editorial-reusable-knowledge-v6";
 
 async function main() {
   const command = process.argv[2];

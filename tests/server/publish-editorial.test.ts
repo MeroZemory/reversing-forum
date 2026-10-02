@@ -76,7 +76,7 @@ function run(
     });
     write("bundle.json", {
       ...versions,
-      qualityPolicyVersion: "reusable-technical-knowledge-v2",
+      qualityPolicyVersion: "reusable-technical-knowledge-v3",
       processingRecord: "processing.json",
       ...overrides.bundle,
       entries: [
@@ -100,7 +100,7 @@ function run(
           publicHash,
           passed: true,
           quality: true,
-          qualityPolicyVersion: "reusable-technical-knowledge-v2",
+          qualityPolicyVersion: "reusable-technical-knowledge-v3",
           meaning: true,
           privacy: true,
           rights: true,
@@ -216,8 +216,10 @@ globalThis.fetch = async (url, options = {}) => {
 it.each([
   { bundle: { qualityPolicyVersion: undefined } },
   { bundle: { qualityPolicyVersion: "old-policy" } },
+  { bundle: { qualityPolicyVersion: "reusable-technical-knowledge-v2" } },
   { verdict: { qualityPolicyVersion: undefined } },
   { verdict: { qualityPolicyVersion: "old-policy" } },
+  { verdict: { qualityPolicyVersion: "reusable-technical-knowledge-v2" } },
   { verdict: { quality: undefined } },
   { verdict: { quality: false } },
   { verdict: { publicHash: "different-snapshot" } },
