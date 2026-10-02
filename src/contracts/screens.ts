@@ -12,6 +12,14 @@ export type PageResult<T> =
   { kind: "ready"; data: T } | { kind: "redirect"; href: string };
 
 export type FeedScreenData = {
+  basePath?: string;
+  title?: string;
+  intro?: string;
+  compactEditorial?: {
+    posts: PostSummary[];
+    total: number;
+    activityTotal: number;
+  };
   filters: FeedFilters;
   result: {
     posts: PostSummary[];
@@ -23,6 +31,19 @@ export type FeedScreenData = {
   topics: { tag: string; count: number }[];
   from: string;
   writeHref: string;
+};
+
+export type ResourceGuide = {
+  slug: string;
+  title: string;
+  description: string;
+  count: number;
+  posts: PostSummary[];
+};
+export type ResourcesScreenData = {
+  guides: ResourceGuide[];
+  selected?: ResourceGuide;
+  feed: FeedScreenData;
 };
 
 export type PostDocument = {
@@ -39,6 +60,20 @@ export type PostScreenData = {
   fromMyPosts: boolean;
   postPath: string;
   publicUrl: string;
+  relatedPosts?: { id: string; title: string }[];
+  publicationNotice?: {
+    reason:
+      | "duplicate"
+      | "waiting"
+      | "screening"
+      | "size"
+      | "budget"
+      | "busy"
+      | "attempt-limit";
+    relatedPosts: { id: string; title: string }[];
+    canRetry: boolean;
+    canRequestReview?: boolean;
+  } | null;
 };
 
 export type MyPostsScreenData = {

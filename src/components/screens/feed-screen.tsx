@@ -1,4 +1,7 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+import { SiteEntrances, ResourcePostList } from "../resources-ui";
+import { PostLink } from "../feed-navigation";
 import Form from "next/form";
 import {
   Plus,
@@ -10,33 +13,50 @@ import {
 } from "lucide-react";
 import type { FeedScreenData } from "@/contracts/screens";
 import { purposeLabels } from "@/lib/types";
-import { feedHref, feedPurposes } from "@/lib/feed-navigation";
+import { feedPurposes } from "@/lib/feed-navigation";
+import { listHref } from "@/lib/resource-navigation";
+import type { FeedFilters } from "@/lib/feed-navigation";
 import { PostList } from "../post-list";
 import { FeedScrollRestoration } from "../feed-navigation";
 import { ActionLink } from "../ui/action";
 
-export function FeedScreen({ data }: { data: FeedScreenData }) {
+export function FeedScreen({
+  data,
+  guideContent,
+}: {
+  data: FeedScreenData;
+  guideContent?: ReactNode;
+}) {
   const { filters, result, topics, from, writeHref } = data;
   const { purpose, tag, query } = filters;
+  const href = (values: FeedFilters = {}) =>
+    listHref(data.basePath ?? "/", values);
   const heading = query
     ? "검색 결과"
     : tag
       ? `${tag} 주제`
       : purpose
         ? `${purposeLabels[purpose]} 글`
-        : "최신 글";
+        : (data.title ?? "최신 글");
   return (
     <div className="shell home-shell">
       <FeedScrollRestoration href={from} />
+      <SiteEntrances active={data.basePath ? "resources" : "feed"} />
+      {guideContent}
       <div className="community-layout">
         <section className="forum-feed" aria-labelledby="forum-title">
           <div className="forum-heading">
             <div>
-              <h1 id="forum-title">{heading}</h1>
+              {guideContent && data.basePath === "/resources" ? (
+                <h2 id="forum-title">{heading}</h2>
+              ) : (
+                <h1 id="forum-title">{heading}</h1>
+              )}
               <p className="feed-intro">
-                {tag
-                  ? "이 주제가 붙은 글을 목적과 검색어로 좁혀 보세요."
-                  : "질문하고, 분석 과정과 작업법을 함께 남겨 주세요."}
+                {data.intro ??
+                  (tag
+                    ? "이 주제가 붙은 글을 목적과 검색어로 좁혀 보세요."
+                    : "질문하고, 분석 과정과 작업법을 함께 남겨 주세요.")}
               </p>
             </div>
             <ActionLink size="compact" href={writeHref}>
@@ -46,7 +66,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
           <div className="forum-controls">
             <nav className="filter-tabs" aria-label="글 목적">
               <Link
-                href={feedHref({ ...filters, purpose: undefined, page: 1 })}
+                href={href({ ...filters, purpose: undefined, page: 1 })}
                 scroll={false}
                 className={!purpose ? "active" : ""}
                 aria-current={!purpose ? "page" : undefined}
@@ -56,7 +76,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
               {feedPurposes.map((item) => (
                 <Link
                   key={item}
-                  href={feedHref({ ...filters, purpose: item, page: 1 })}
+                  href={href({ ...filters, purpose: item, page: 1 })}
                   scroll={false}
                   className={purpose === item ? "active" : ""}
                   aria-current={purpose === item ? "page" : undefined}
@@ -67,7 +87,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
             </nav>
             <Form
               className="search-form"
-              action="/"
+              action={data.basePath ?? "/"}
               scroll={false}
               role="search"
             >
@@ -97,7 +117,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
                 {topics.map((topic) => (
                   <Link
                     key={topic.tag}
-                    href={feedHref({ tag: topic.tag })}
+                    href={href({ tag: topic.tag })}
                     aria-current={
                       tag?.toLowerCase() === topic.tag.toLowerCase()
                         ? "page"
@@ -120,7 +140,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
             <div className="active-filters" aria-label="적용한 검색 조건">
               {tag && (
                 <Link
-                  href={feedHref({ ...filters, tag: undefined, page: 1 })}
+                  href={href({ ...filters, tag: undefined, page: 1 })}
                   scroll={false}
                   aria-label="주제 지우기"
                 >
@@ -132,7 +152,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
               )}
               {query && (
                 <Link
-                  href={feedHref({ ...filters, query: undefined, page: 1 })}
+                  href={href({ ...filters, query: undefined, page: 1 })}
                   scroll={false}
                   aria-label="검색어 지우기"
                 >
@@ -146,16 +166,58 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
           )}
           <div id="feed-results" className="list-summary">
             <span>
-              공개 글 <strong>{result.total.toLocaleString("ko-KR")}</strong>개
+              {data.compactEditorial ? "전체 공개 글 " : "공개 글 "}
+              <strong>{result.total.toLocaleString("ko-KR")}</strong>개
             </span>
             <span>최신순</span>
           </div>
-          <PostList posts={result.posts} filters={filters} from={from} />
+          {data.compactEditorial && data.compactEditorial.total > 0 && (
+            <section
+              className="editorial-bundle"
+              aria-labelledby="editorial-bundle-title"
+            >
+              <h2 id="editorial-bundle-title">새로 정리한 편집 자료</h2>
+              <p>
+                댓글이 없는 편집 글 {data.compactEditorial.total}개를
+                묶었습니다.
+              </p>
+              <ul>
+                {data.compactEditorial.posts.map((post) => (
+                  <li key={post.id}>
+                    <PostLink id={post.id} title={post.title} from={from} />
+                  </li>
+                ))}
+              </ul>
+              <Link href="/resources">자료 전체 보기</Link>
+            </section>
+          )}
+          {data.compactEditorial && (
+            <p className="activity-summary">
+              회원 글과 댓글이 있는 편집 글{" "}
+              {data.compactEditorial.activityTotal}개
+            </p>
+          )}
+          {data.basePath ? (
+            <ResourcePostList
+              posts={result.posts}
+              from={from}
+              basePath={data.basePath}
+            />
+          ) : data.compactEditorial && !result.posts.length ? (
+            <div className="forum-empty">
+              <p>
+                아직 회원 글이나 댓글이 있는 글이 없습니다. 자료를 읽고 궁금한
+                점을 남겨 주세요.
+              </p>
+            </div>
+          ) : (
+            <PostList posts={result.posts} filters={filters} from={from} />
+          )}
           {result.pageCount > 1 && (
             <nav className="pagination" aria-label="목록 페이지">
               {result.page > 1 ? (
                 <Link
-                  href={`${feedHref({ ...filters, page: result.page - 1 })}#feed-results`}
+                  href={`${href({ ...filters, page: result.page - 1 })}#feed-results`}
                   rel="prev"
                 >
                   <ChevronLeft size={16} aria-hidden="true" />
@@ -172,7 +234,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
               </span>
               {result.page < result.pageCount ? (
                 <Link
-                  href={`${feedHref({ ...filters, page: result.page + 1 })}#feed-results`}
+                  href={`${href({ ...filters, page: result.page + 1 })}#feed-results`}
                   rel="next"
                 >
                   다음
@@ -195,7 +257,7 @@ export function FeedScreen({ data }: { data: FeedScreenData }) {
                 {topics.map((topic) => (
                   <Link
                     key={topic.tag}
-                    href={feedHref({ tag: topic.tag })}
+                    href={href({ tag: topic.tag })}
                     className={
                       tag?.toLowerCase() === topic.tag.toLowerCase()
                         ? "selected-topic"

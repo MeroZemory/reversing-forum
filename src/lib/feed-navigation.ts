@@ -4,6 +4,7 @@ import {
   type PostKind,
   type PostPurpose,
 } from "./types";
+import { isResourcePath, listHref } from "./resource-navigation";
 
 export type FeedFilters = {
   purpose?: PostPurpose;
@@ -34,13 +35,8 @@ export function readFeedFilters(
   };
 }
 
-export function feedHref({ purpose, tag, query, page }: FeedFilters = {}) {
-  const params = new URLSearchParams();
-  if (purpose) params.set("purpose", purpose);
-  if (tag) params.set("tag", tag);
-  if (query) params.set("q", query);
-  if (page && page > 1) params.set("page", String(page));
-  return params.size ? `/?${params}` : "/";
+export function feedHref(filters: FeedFilters = {}) {
+  return listHref("/", filters);
 }
 
 export function safeFeedReturn(value?: string) {
@@ -48,14 +44,21 @@ export function safeFeedReturn(value?: string) {
     !value ||
     !value.startsWith("/") ||
     value.startsWith("//") ||
-    value.includes("\\")
+    value.includes("\\") ||
+    /[\u0000-\u001f\u007f]/.test(value)
   )
     return "/";
   try {
     const url = new URL(value, "https://reversing-all.invalid");
-    if (url.origin !== "https://reversing-all.invalid" || url.pathname !== "/")
+    if (
+      url.origin !== "https://reversing-all.invalid" ||
+      (url.pathname !== "/" && !isResourcePath(url.pathname))
+    )
       return "/";
-    return feedHref(readFeedFilters(Object.fromEntries(url.searchParams)));
+    return listHref(
+      url.pathname,
+      readFeedFilters(Object.fromEntries(url.searchParams)),
+    );
   } catch {
     return "/";
   }
@@ -66,7 +69,8 @@ export function safeListReturn(value?: string) {
     !value ||
     !value.startsWith("/") ||
     value.startsWith("//") ||
-    value.includes("\\")
+    value.includes("\\") ||
+    /[\u0000-\u001f\u007f]/.test(value)
   )
     return "/";
   try {

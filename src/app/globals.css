@@ -1,5 +1,125 @@
 @import "./tokens.css";
 
+/* Shared entrances and the curated public resource guide. */
+.site-entrances {
+  display: flex;
+  gap: var(--space-7);
+  margin-bottom: var(--space-7);
+  border-bottom: 1px solid var(--color-border);
+}
+.site-entrances a {
+  display: flex;
+  align-items: center;
+  min-height: var(--target-size);
+  border-bottom: 2px solid transparent;
+  font-weight: var(--weight-semibold);
+}
+.site-entrances a[aria-current="page"] {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.resource-guide-intro {
+  margin-bottom: var(--space-8);
+}
+.resource-guide-intro > p {
+  margin-top: var(--space-4);
+  max-width: var(--layout-reading);
+  line-height: var(--leading-prose);
+}
+.resource-guide-note,
+.resource-excerpt,
+.resource-post-meta,
+.activity-summary {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+.resource-guides {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  margin-top: var(--space-7);
+}
+.resource-guide {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  padding: var(--space-6);
+}
+.resource-guide > p {
+  margin-top: var(--space-3);
+  line-height: var(--leading-prose);
+  color: var(--color-muted);
+}
+.resource-guide ul,
+.editorial-bundle ul {
+  padding-left: var(--space-6);
+  margin: var(--space-4) 0;
+}
+.resource-guide li,
+.editorial-bundle li {
+  margin-block: var(--space-3);
+  overflow-wrap: anywhere;
+}
+.resource-guide li a,
+.editorial-bundle li a {
+  display: inline-block;
+  padding-block: var(--space-3);
+}
+.resource-guide-all {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-size);
+  color: var(--color-primary);
+  font-weight: var(--weight-semibold);
+}
+.resource-posts {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  background: var(--color-panel);
+}
+.resource-posts > li {
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-5);
+}
+.resource-excerpt {
+  margin-top: var(--space-3);
+  line-height: var(--leading-prose);
+  overflow-wrap: anywhere;
+}
+.resource-post-meta {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+.editorial-bundle {
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border);
+  padding: var(--space-5);
+  margin-block: var(--space-4);
+}
+.editorial-bundle > p {
+  color: var(--color-muted);
+  margin-top: var(--space-3);
+}
+.editorial-bundle > a {
+  color: var(--color-primary);
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target-size);
+}
+.activity-summary {
+  padding: var(--space-4) var(--space-5);
+}
+@media (max-width: 640px) {
+  .resource-guides {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .resource-guide {
+    padding: var(--space-5);
+  }
+}
+
 /* Base and keyboard access */
 *,
 *::before,
@@ -270,6 +390,41 @@ svg {
 }
 .account-control {
   position: relative;
+}
+.account-menu {
+  position: relative;
+}
+.account-menu > summary {
+  cursor: pointer;
+  list-style: none;
+  gap: var(--space-2);
+}
+.account-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.account-menu[open] > summary {
+  background: var(--color-header-hover);
+}
+.account-menu-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  display: grid;
+  min-width: 144px;
+  padding: var(--space-2);
+  background: var(--color-header);
+  border: 1px solid var(--color-header-hover);
+  border-radius: var(--radius-sm);
+}
+.account-menu-panel .account-control,
+.account-menu-panel .account-link,
+.account-menu-panel .text-button,
+.account-menu-panel .button {
+  width: 100%;
+}
+.account-menu-panel .inline-error {
+  padding: var(--space-2);
 }
 .account-link,
 .text-button {
@@ -1707,4 +1862,23 @@ textarea {
   html {
     scroll-behavior: auto;
   }
+}
+
+.related-posts {
+  margin-block: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+}
+.related-posts h2 {
+  margin: 0 0 var(--space-3);
+  font-size: 1rem;
+}
+.related-posts ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+.related-posts li + li {
+  margin-top: var(--space-2);
 }

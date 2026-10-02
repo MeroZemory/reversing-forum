@@ -6,6 +6,7 @@ import { getPostPurpose } from "@/lib/types";
 import { CommentSection } from "@/features/comment-section";
 import { PostScreen } from "@/components/screens/post-screen";
 import { postMetadata } from "@/components/screens/post-metadata";
+import { PublicationRetry } from "@/features/publication-retry";
 type Props = {
   params: Promise<{ id: string }>;
   searchParams: Promise<SearchParams>;
@@ -28,5 +29,17 @@ export default async function PostPage({ params, searchParams }: Props) {
         viewer={data.viewer}
       />
     ) : null;
-  return <PostScreen data={data} commentsSlot={commentsSlot} />;
+  return (
+    <PostScreen
+      data={data}
+      commentsSlot={commentsSlot}
+      retrySlot={
+        data.publicationNotice?.canRequestReview ? (
+          <PublicationRetry postId={id} independentReview />
+        ) : data.publicationNotice?.canRetry ? (
+          <PublicationRetry postId={id} />
+        ) : null
+      }
+    />
+  );
 }

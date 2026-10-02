@@ -88,9 +88,42 @@ export type CommentSectionViewProps = Omit<
 export type AuthFormProps = { mode: AuthMode; returnTo?: string };
 export type AuthFormState = {
   busy: boolean;
+  pending?: "email" | "google";
   error: string;
   destination: string;
+  googleEnabled?: boolean;
+  google?(): Promise<void>;
   submit(command: AuthCommand, onValidationError?: () => void): Promise<void>;
+};
+export type AccountData = {
+  name: string;
+  email: string;
+  emailVerified: boolean;
+  nicknameReady: boolean;
+  fresh: boolean;
+  hasPassword: boolean;
+  googleAccountId: string | null;
+  googleEnabled: boolean;
+  mailEnabled: boolean;
+};
+export type AccountFlowMode =
+  "account" | "verify" | "forgot" | "reset" | "onboarding";
+export type AccountFlowState = {
+  mode: AccountFlowMode;
+  busy: boolean;
+  error: string;
+  notice: string;
+  account: AccountData | null;
+  email: string;
+  token?: string;
+  loginHref?: string;
+  submit(values: {
+    email?: string;
+    name?: string;
+    password?: string;
+  }): Promise<void>;
+  linkGoogle(): Promise<void>;
+  unlinkGoogle(): Promise<void>;
 };
 export type AccountButtonState = {
   busy: boolean;

@@ -32,7 +32,11 @@ export type EditorialProvenance = {
   period: string;
   verificationSummary: string;
 };
-export type Viewer = Author & { email: string };
+export type Viewer = Author & {
+  email: string;
+  emailVerified?: boolean;
+  nicknameReady?: boolean;
+};
 export type PostSummary = {
   id: string;
   title: string;

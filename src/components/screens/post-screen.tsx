@@ -9,14 +9,17 @@ import { statusLabels, statusDescriptions } from "../ui/status-badge";
 import { MarkdownBody } from "../markdown-body";
 import { ListReturnLink } from "../feed-navigation";
 import { EditorialAuthor } from "../ui/editorial-author";
+import { PostLink } from "../feed-navigation";
 import { authorDisplayName } from "@/lib/editorial-labels";
 
 export function PostScreen({
   data,
   commentsSlot,
+  retrySlot,
 }: {
   data: PostScreenData;
   commentsSlot: ReactNode;
+  retrySlot?: ReactNode;
 }) {
   const { post, comments, returnTo, fromMyPosts } = data;
   const published = post.status === "published";
@@ -49,6 +52,33 @@ export function PostScreen({
       {!published && (
         <Notice tone="warning" title={statusLabels[post.status]}>
           {statusDescriptions[post.status]}
+          {data.publicationNotice && (
+            <>
+              <p>
+                {data.publicationNotice.reason === "duplicate"
+                  ? "기존 글과 비교했을 때 새 정보가 확인되지 않아 공개가 보류됐습니다. 관련 글을 확인해 주세요."
+                  : data.publicationNotice.reason === "busy"
+                    ? "다른 글을 확인하고 있습니다. 잠시 후 다시 확인할 수 있습니다."
+                    : data.publicationNotice.reason === "size"
+                      ? "글이 너무 길어 전체 내용을 확인하지 못했습니다."
+                      : data.publicationNotice.reason === "attempt-limit"
+                        ? "이 글의 다시 확인 요청 한도에 도달했습니다. 현재는 공개되지 않습니다."
+                        : data.publicationNotice.reason === "screening"
+                          ? "기본 확인에서 공개를 보류했습니다."
+                          : "확인이 끝나지 않았습니다. 내용은 비공개로 유지됩니다."}
+              </p>
+              {data.publicationNotice.relatedPosts.length > 0 && (
+                <ul>
+                  {data.publicationNotice.relatedPosts.map((item) => (
+                    <li key={item.id}>
+                      <PostLink id={item.id} title={item.title} from="/" />
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {retrySlot}
+            </>
+          )}
         </Notice>
       )}
       <article className="article">
@@ -101,11 +131,23 @@ export function PostScreen({
         {post.tags.length > 0 && (
           <div className="article-tags">
             {post.tags.map((tag) => (
-              <TopicLink key={tag} tag={tag} />
+              <TopicLink key={tag} tag={tag} from={returnTo} />
             ))}
           </div>
         )}
       </article>
+      {published && (data.relatedPosts?.length ?? 0) > 0 && (
+        <section className="related-posts" aria-labelledby="related-title">
+          <h2 id="related-title">함께 읽을 글</h2>
+          <ul>
+            {data.relatedPosts!.map((item) => (
+              <li key={item.id}>
+                <PostLink id={item.id} title={item.title} from={returnTo} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {published && commentsSlot}
     </div>
   );

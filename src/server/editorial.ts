@@ -3,7 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { getViewer } from "./auth";
 import { db } from "./db";
 import { ForumError } from "./forum";
-import { screenPost } from "./jev";
+import { controlPublication } from "./publication-control";
+import { recordPublishedRelations } from "./duplicates/index";
 
 type Versions = {
   basisVersion: string;
@@ -55,6 +56,7 @@ type Draft = DraftInput & {
     epoch: number;
     status: "pending" | "held" | "published";
     attempts: number;
+    evidence?: string;
   } | null;
 };
 type Basis = { versions: string; allowed: number; generation: number };
@@ -659,16 +661,15 @@ async function publish(key: string, data: Record<string, unknown>, user: User) {
     .immediate();
   if (start.result) return start.result;
   const snapshot = start.draft!;
-  let result: Awaited<ReturnType<typeof screenPost>>;
-  try {
-    result = await screenPost(JSON.stringify(snapshot.publicData));
-  } catch {
-    result = { status: "pending", evidence: "" };
-  }
-  const currentUser = await editor();
-  if (currentUser.id !== user.id) throw conflict();
-  return db
-    .transaction(() => {
+  let currentUser = user;
+  return controlPublication(
+    {
+      key: `editorial:${key}:${snapshot.revision}:${digest([snapshot.publicData, versions(snapshot)])}`,
+      lane: "editorial",
+      snapshot: snapshot.publicData,
+      excludePostId: receipt(snapshot)?.id,
+    },
+    (result) => {
       const d = load(key, currentUser);
       const account = author(key);
       const published = db
@@ -687,6 +688,7 @@ async function publish(key: string, data: Record<string, unknown>, user: User) {
       // Only the latest outstanding attempt may commit a result.
       if (d.screening?.attempts !== start.attempt) throw conflict();
       d.screening.status = result.status;
+      d.screening.evidence = result.evidence;
       if (result.status !== "published") {
         save(d);
         audit(user, "screen-result", d);
@@ -718,6 +720,11 @@ async function publish(key: string, data: Record<string, unknown>, user: User) {
       db.prepare(
         "INSERT INTO editorial_receipts(candidate_key,post_id,revision,hash,provenance) VALUES(?,?,?,?,?) ON CONFLICT(candidate_key) DO UPDATE SET revision=excluded.revision,hash=excluded.hash,provenance=excluded.provenance",
       ).run(key, id, d.revision, d.hash, JSON.stringify(p.provenance));
+      recordPublishedRelations(
+        id,
+        result.relatedPublishedIds ?? [],
+        result.corpusHash,
+      );
       db.prepare(
         "INSERT INTO editorial_publications(candidate_key,revision,hash,versions,post_id) VALUES(?,?,?,?,?)",
       ).run(key, d.revision, d.hash, JSON.stringify(versions(d)), id);
@@ -725,6 +732,10 @@ async function publish(key: string, data: Record<string, unknown>, user: User) {
       save(d);
       audit(user, "publish", d);
       return preview(d);
-    })
-    .immediate();
+    },
+    async () => {
+      currentUser = await editor();
+      if (currentUser.id !== user.id) throw conflict();
+    },
+  );
 }

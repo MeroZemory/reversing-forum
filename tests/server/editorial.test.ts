@@ -9,9 +9,24 @@ import {
 } from "vitest";
 
 const context = vi.hoisted(() => ({ headers: new Headers() }));
+const mail = vi.hoisted(() => ({ links: [] as string[] }));
+vi.mock("@/server/auth-mail", () => ({
+  mailConfigured: () => true,
+  googleConfigured: () => false,
+  sendAuthMail: async (_email: string, url: string) => {
+    mail.links.push(url);
+    return true;
+  },
+}));
 const screening = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: async () => context.headers }));
 vi.mock("@/server/jev", () => ({ screenPost: screening.run }));
+const duplicate = vi.hoisted(() => ({ run: vi.fn(), relations: vi.fn() }));
+vi.mock("@/server/duplicates/index", () => ({
+  assessDuplicate: duplicate.run,
+  recordPublishedRelations: duplicate.relations,
+  publicCorpusHash: () => "synthetic-corpus",
+}));
 let api: typeof import("@/server/editorial");
 let db: (typeof import("@/server/db"))["db"];
 let forum: typeof import("@/server/forum");
@@ -117,7 +132,22 @@ beforeAll(async () => {
       }),
     );
     expect(response.status).toBe(200);
-    return response.headers
+    const verified = await authModule.auth.handler(
+      new Request(mail.links.at(-1)!),
+    );
+    expect(verified.status).toBeLessThan(400);
+    const login = await authModule.auth.handler(
+      new Request("http://localhost:3000/api/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:3000",
+        },
+        body: JSON.stringify({ email, password: "test-password-123456" }),
+      }),
+    );
+    expect(login.status).toBe(200);
+    return login.headers
       .getSetCookie()
       .map((c) => c.split(";")[0])
       .join("; ");
@@ -129,6 +159,7 @@ beforeAll(async () => {
   context.headers = new Headers({ cookie: editorCookie });
   editorId = (await authModule.getViewer())!.id;
   api = await import("@/server/editorial");
+  (await import("@/server/publication-control")).initPublicationTables();
   forum = await import("@/server/forum");
   collection = await import("@/app/api/editorial/route");
   item = await import("@/app/api/editorial/[id]/route");
@@ -137,6 +168,18 @@ beforeEach(async () => {
   db.exec(`DELETE FROM editorial_audit; DELETE FROM editorial_publications; DELETE FROM editorial_receipts;
     DELETE FROM editorial_sources; DELETE FROM editorial_revisions; DELETE FROM editorial_drafts;
     DELETE FROM editorial_suppression; DELETE FROM editorial_basis; DELETE FROM comments; DELETE FROM posts;`);
+  db.exec(
+    "DELETE FROM publication_limits; DELETE FROM publication_attempts; DELETE FROM publication_lease;",
+  );
+  duplicate.relations.mockReset().mockImplementation(() => {
+    expect(db.inTransaction).toBe(true);
+  });
+  duplicate.run.mockReset().mockResolvedValue({
+    verdict: "distinct",
+    relatedPostIds: [],
+    evidence: "synthetic-duplicate-evidence",
+    corpusHash: "synthetic-corpus",
+  });
   context.headers = new Headers({ cookie: editorCookie });
   process.env.EDITOR_USER_ID = editorId;
   process.env.EDITORIAL_AUTHOR_USER_ID = authorId;
@@ -149,6 +192,94 @@ beforeEach(async () => {
     ...tuple,
     allowed: true,
   });
+});
+
+it("shares the paid-call lease with normal posts and keeps editorial gates intact", async () => {
+  const draft = await approved();
+  const waiting = deferred();
+  screening.run.mockReturnValueOnce(waiting.promise);
+  const normal = forum.createPost(
+    { id: authorId, name: "synthetic author", email: "synthetic@example.test" },
+    {
+      title: "Synthetic normal post",
+      body: "A complete synthetic normal post for concurrency.",
+      kind: "question",
+      tags: [],
+    },
+  );
+  await vi.waitFor(() => expect(screening.run).toHaveBeenCalledTimes(1));
+  const blocked = await action(draft, "publish");
+  expect(blocked.post).toBeNull();
+  expect(blocked.screeningStatus).toBe("pending");
+  expect(screening.run).toHaveBeenCalledTimes(1);
+  waiting.resolve({ status: "published", evidence: "synthetic pass" });
+  expect((await normal).status).toBe("published");
+  expect((await action(draft, "publish")).post?.status).toBe("published");
+});
+
+it("does not let a request select or override the authenticated publication lane", async () => {
+  const draft = await approved();
+  await expect(
+    action(draft, "publish", { lane: "editorial" }),
+  ).rejects.toMatchObject({ status: 400 });
+  expect(screening.run).not.toHaveBeenCalled();
+});
+
+it("persists assessed editorial relations separately from private screening evidence", async () => {
+  db.prepare(
+    "INSERT INTO posts(id,author_id,author_name,title,body,kind,tags,status,created_at) VALUES('relation-target','synthetic','synthetic','title','body','analysis','[]','published','old')",
+  ).run();
+  duplicate.run.mockResolvedValueOnce({
+    verdict: "related",
+    relatedPostIds: ["relation-target"],
+    evidence: "private comparison",
+    corpusHash: "synthetic-corpus",
+  });
+  const published = await action(await approved(), "publish");
+  expect(duplicate.relations).toHaveBeenCalledWith(
+    published.post!.id,
+    ["relation-target"],
+    "synthetic-corpus",
+  );
+  expect(
+    db
+      .prepare("SELECT screening_evidence FROM posts WHERE id=?")
+      .get(published.post!.id),
+  ).toEqual({ screening_evidence: null });
+  expect(JSON.stringify(published)).not.toContain("private comparison");
+});
+
+it("keeps duplicate evidence private and a revision excludes only its own receipt", async () => {
+  const a = await approved();
+  duplicate.run.mockResolvedValueOnce({
+    verdict: "duplicate",
+    relatedPostIds: ["missing-private-id"],
+    evidence: "private duplicate evidence",
+    corpusHash: "synthetic-corpus",
+  });
+  const held = await action(a, "publish");
+  expect(held.screeningStatus).toBe("held");
+  expect(held.post).toBeNull();
+  expect(JSON.stringify(held)).not.toContain("private duplicate evidence");
+  expect(screening.run).not.toHaveBeenCalled();
+  const state = db
+    .prepare("SELECT state FROM editorial_drafts WHERE candidate_key=?")
+    .get(a.candidateKey) as { state: string };
+  expect(JSON.parse(state.state).screening.evidence).toContain(
+    "private duplicate evidence",
+  );
+
+  const first = await action(await approved("other-candidate"), "publish");
+  const changed = input("other-candidate", 2);
+  changed.publicData.body += " A synthetic new contribution.";
+  let revision = await action(first, "revise", { draft: changed });
+  revision = await action(revision, "review", { review });
+  revision = await action(revision, "approve");
+  const updated = await action(revision, "publish");
+  expect(updated.post?.id).toBe(first.post?.id);
+  expect(duplicate.run.mock.calls.at(-1)?.[0].excludePostId).toBe(
+    first.post?.id,
+  );
 });
 afterAll(() => db.close());
 

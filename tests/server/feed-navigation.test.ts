@@ -8,6 +8,34 @@ import {
 import { safeReturnPath } from "@/lib/format";
 
 describe("feed navigation", () => {
+  it("preserves exact resource routes and filters for shared post/write/auth return paths", () => {
+    for (const path of [
+      "/resources",
+      "/resources/learning",
+      "/resources/executables",
+      "/resources/systems",
+      "/resources/devices",
+    ]) {
+      const value =
+        path +
+        "?purpose=share&tag=Ghidra&q=analysis&page=2&private=hidden#comments";
+      const expected = path + "?purpose=share&tag=Ghidra&q=analysis&page=2";
+      expect(safeListReturn(value)).toBe(expected);
+      expect(safeFeedReturn(value)).toBe(expected);
+    }
+    for (const value of [
+      "//evil.test/resources",
+      "/resources/unknown",
+      "/resources/../api",
+      "/resources\\evil",
+      "/resources%2funknown",
+      "https://evil.test/resources",
+      "/resources\n",
+    ]) {
+      expect(safeListReturn(value)).toBe("/");
+      expect(safeFeedReturn(value)).toBe("/");
+    }
+  });
   it("keeps the author's original status filter while preventing unrelated list return destinations", () => {
     expect(safeListReturn("/me?status=held&ignored=value")).toBe(
       "/me?status=held",

@@ -77,7 +77,17 @@ if (
 )
   throw new Error("processing-scope-mismatch");
 
-async function call(path: string, data: unknown) {
+type Preview = {
+  hash: string;
+  revision: number;
+  state: string;
+  basisVersion: string;
+  rightsVersion: string;
+  rulesVersion: string;
+  screeningStatus: string | null;
+  post?: { id: string; status: string } | null;
+};
+async function call<T = Preview>(path: string, data: unknown): Promise<T> {
   const response = await fetch(`${session.origin}${path}`, {
     method: "POST",
     headers: {
@@ -86,17 +96,42 @@ async function call(path: string, data: unknown) {
       Cookie: session.cookie,
     },
     body: JSON.stringify(data),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(150_000),
   });
   if (!response.ok) throw new Error(`editorial-http-${response.status}`);
-  return (await response.json()) as {
-    hash: string;
-    revision: number;
-    state: string;
-    post?: { id: string; status: string };
-  };
+  return (await response.json()) as T;
 }
-async function current(key: string) {
+async function curate(published: Preview) {
+  if (published.state !== "published" || published.post?.status !== "published")
+    throw new Error("server-snapshot-mismatch");
+  const path = "/api/resources/curation";
+  const snapshot = await call<{
+    hash: string;
+    version: string;
+    eligibleGuides: string[];
+    editorial: ({ hash: string; revision: number } & typeof versions) | null;
+  }>(path, { action: "snapshot", postId: published.post.id });
+  if (
+    !snapshot.editorial ||
+    snapshot.editorial.hash !== published.hash ||
+    snapshot.editorial.revision !== published.revision ||
+    Object.entries(versions).some(
+      ([key, value]) =>
+        snapshot.editorial![key as keyof typeof versions] !== value,
+    )
+  )
+    throw new Error("server-snapshot-mismatch");
+  if (!snapshot.eligibleGuides.length) return [];
+  const result = await call<{ curated: boolean; guides: string[] }>(path, {
+    action: "select",
+    postId: published.post.id,
+    hash: snapshot.hash,
+    version: snapshot.version,
+  });
+  if (result.curated !== true) throw new Error("server-snapshot-mismatch");
+  return result.guides;
+}
+async function current(key: string): Promise<Preview | null> {
   const response = await fetch(`${session.origin}/api/editorial/${key}`, {
     headers: { Cookie: session.cookie },
     signal: AbortSignal.timeout(30_000),
@@ -134,18 +169,36 @@ async function main() {
         receipts.push({ candidateKey: entry.candidateKey, state: "withdrawn" });
         continue;
       }
+      const sameSnapshot =
+        existing?.hash === verdict.publicHash &&
+        Object.entries(versions).every(
+          ([key, value]) => existing[key as keyof typeof versions] === value,
+        );
+      // A confirmed rejection belongs to this snapshot. Do not reset it by
+      // revising, reapproving, or retrying publication of unchanged material.
+      if (sameSnapshot && existing.screeningStatus === "held") {
+        held++;
+        receipts.push({
+          candidateKey: entry.candidateKey,
+          state: existing.state,
+          screeningStatus: existing.screeningStatus,
+          post: existing.post ?? null,
+        });
+        continue;
+      }
       if (
         existing?.state === "published" &&
-        existing.hash === verdict.publicHash &&
-        Object.entries(versions).every(
-          ([key, value]) => existing[key] === value,
-        )
+        existing.post?.status === "published" &&
+        sameSnapshot
       ) {
+        const guides =
+          command === "publish" ? await curate(existing) : undefined;
         published++;
         receipts.push({
           candidateKey: entry.candidateKey,
           state: "published",
           post: existing.post,
+          guides,
         });
         continue;
       }
@@ -165,17 +218,19 @@ async function main() {
           },
         },
       };
-      let draft = existing
-        ? await call(`/api/editorial/${entry.candidateKey}`, {
-            action: "revise",
-            revision: existing.revision,
-            hash: existing.hash,
-            basisVersion: existing.basisVersion,
-            rightsVersion: existing.rightsVersion,
-            rulesVersion: existing.rulesVersion,
-            draft: input,
-          })
-        : await call("/api/editorial", { action: "ingest", ...input });
+      let draft = sameSnapshot
+        ? existing
+        : existing
+          ? await call(`/api/editorial/${entry.candidateKey}`, {
+              action: "revise",
+              revision: existing.revision,
+              hash: existing.hash,
+              basisVersion: existing.basisVersion,
+              rightsVersion: existing.rightsVersion,
+              rulesVersion: existing.rulesVersion,
+              draft: input,
+            })
+          : await call("/api/editorial", { action: "ingest", ...input });
       ingested++;
       if (
         command === "publish" &&
@@ -189,37 +244,47 @@ async function main() {
         };
         if (draft.hash !== verdict.publicHash)
           throw new Error("server-snapshot-mismatch");
-        await call(`/api/editorial/${entry.candidateKey}`, {
-          action: "review",
-          ...target,
-          review: {
-            model: "sol",
-            effort: "xhigh",
-            referenceId: entry.reviewId,
-            compared: true,
-            checks: {
-              meaning: true,
-              privacy: true,
-              rights: true,
-              externalTransfer: true,
+        if (draft.state !== "approved") {
+          await call(`/api/editorial/${entry.candidateKey}`, {
+            action: "review",
+            ...target,
+            review: {
+              model: "sol",
+              effort: "xhigh",
+              referenceId: entry.reviewId,
+              compared: true,
+              checks: {
+                meaning: true,
+                privacy: true,
+                rights: true,
+                externalTransfer: true,
+              },
             },
-          },
-        });
-        await call(`/api/editorial/${entry.candidateKey}`, {
-          action: "approve",
-          ...target,
-        });
+          });
+          await call(`/api/editorial/${entry.candidateKey}`, {
+            action: "approve",
+            ...target,
+          });
+        }
         draft = await call(`/api/editorial/${entry.candidateKey}`, {
           action: "publish",
           ...target,
         });
       }
-      if (draft.post?.status === "published") published++;
+      const guides =
+        command === "publish" &&
+        draft.state === "published" &&
+        draft.post?.status === "published"
+          ? await curate(draft)
+          : undefined;
+      if (draft.state === "published" && draft.post?.status === "published")
+        published++;
       else held++;
       receipts.push({
         candidateKey: entry.candidateKey,
         state: draft.state,
         post: draft.post ?? null,
+        guides,
       });
     } catch (error) {
       errors++;

@@ -11,7 +11,14 @@ import {
   type Viewer,
 } from "@/lib/types";
 import { db } from "./db";
-import { screenPost } from "./jev";
+import {
+  allowWriteAttempt,
+  controlPublication,
+  getPublicationNotice,
+  initPublicationTables,
+  payloadHash,
+} from "./publication-control";
+import { recordPublishedRelations } from "./duplicates/index";
 import { editorialDisplayName } from "@/lib/editorial-labels";
 
 export class ForumError extends Error {
@@ -269,6 +276,10 @@ function text(value: unknown, min: number, max: number, label: string): string {
 }
 function member(viewer: Viewer | null): Viewer {
   if (!viewer?.id) throw new ForumError(401, "로그인이 필요합니다.");
+  if (viewer.emailVerified === false)
+    throw new ForumError(403, "이메일 인증을 완료해 주세요.");
+  if (viewer.nicknameReady === false)
+    throw new ForumError(403, "사이트에서 사용할 닉네임을 먼저 설정해 주세요.");
   return viewer;
 }
 function flood(
@@ -293,11 +304,7 @@ function flood(
   )
     throw new ForumError(429, "잠시 후 다시 작성해 주세요.");
 }
-export async function createPost(
-  viewer: Viewer | null,
-  input: unknown,
-): Promise<{ id: string; status: PostDetail["status"] }> {
-  const user = member(viewer);
+function postInput(input: unknown) {
   if (!input || typeof input !== "object")
     throw new ForumError(400, "잘못된 요청입니다.");
   const data = input as Record<string, unknown>;
@@ -308,29 +315,187 @@ export async function createPost(
   if (!Array.isArray(data.tags) || data.tags.length > 5)
     throw new ForumError(400, "태그는 최대 5개입니다.");
   const tags = [...new Set(data.tags.map((t) => text(t, 1, 24, "태그")))];
-  const id = randomUUID();
-  db.transaction(() => {
-    flood("posts", user.id, 30, 2);
-    db.prepare(
-      "INSERT INTO posts(id,author_id,author_name,title,body,kind,tags,status,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)",
-    ).run(
-      id,
-      user.id,
-      user.name,
-      title,
-      body,
-      data.kind as string,
-      JSON.stringify(tags),
-      new Date().toISOString(),
-    );
-  }).immediate();
-  const screening = await screenPost(
-    JSON.stringify({ title, body, kind: data.kind, tags }),
+  return { title, body, kind: data.kind as PostKind, tags };
+}
+
+export async function createPost(
+  viewer: Viewer | null,
+  input: unknown,
+): Promise<{ id: string; status: PostDetail["status"] }> {
+  const user = member(viewer);
+  initPublicationTables();
+  let snapshot: ReturnType<typeof postInput>;
+  try {
+    snapshot = postInput(input);
+  } catch (error) {
+    if (!allowWriteAttempt(user.id))
+      throw new ForumError(429, "잠시 후 다시 작성해 주세요.");
+    throw error;
+  }
+  const { title, body, kind, tags } = snapshot;
+  const hash = payloadHash(snapshot);
+  const prior = db
+    .prepare(
+      `SELECT p.id,p.status FROM post_payloads r JOIN posts p ON p.id=r.post_id
+    WHERE r.author_id=? AND r.payload_hash=?`,
+    )
+    .get(user.id, hash) as
+    { id: string; status: PostDetail["status"] } | undefined;
+  if (prior) return prior;
+  if (!allowWriteAttempt(user.id))
+    throw new ForumError(429, "잠시 후 다시 작성해 주세요.");
+  const bodyHash = payloadHash(body);
+  const created = db
+    .transaction(() => {
+      // Repeat inside the write transaction for other processes/retries.
+      const existing = db
+        .prepare(
+          `SELECT p.id,p.status FROM post_payloads r JOIN posts p ON p.id=r.post_id
+      WHERE r.author_id=? AND r.payload_hash=?`,
+        )
+        .get(user.id, hash) as
+        { id: string; status: PostDetail["status"] } | undefined;
+      if (existing) return { ...existing, fresh: false };
+      if (
+        db
+          .prepare("SELECT 1 FROM posts WHERE author_id=? AND body=? LIMIT 1")
+          .get(user.id, body) ||
+        db
+          .prepare(
+            "SELECT 1 FROM post_payloads WHERE author_id=? AND body_hash=?",
+          )
+          .get(user.id, bodyHash)
+      )
+        throw new ForumError(
+          409,
+          "이미 작성한 본문입니다. 내 글을 확인해 주세요.",
+        );
+      flood("posts", user.id, 30, 2);
+      const id = randomUUID();
+      db.prepare(
+        "INSERT INTO posts(id,author_id,author_name,title,body,kind,tags,status,created_at) VALUES(?,?,?,?,?,?,?,'pending',?)",
+      ).run(
+        id,
+        user.id,
+        user.name,
+        title,
+        body,
+        kind,
+        JSON.stringify(tags),
+        new Date().toISOString(),
+      );
+      db.prepare(
+        "INSERT INTO post_payloads(author_id,payload_hash,body_hash,post_id) VALUES(?,?,?,?)",
+      ).run(user.id, hash, bodyHash, id);
+      return { id, status: "pending" as const, fresh: true };
+    })
+    .immediate();
+  if (!created.fresh) return { id: created.id, status: created.status };
+  return screenOwnedPost(user.id, created.id, snapshot);
+}
+
+// The caller must obtain viewer from a real server session, as for createPost.
+// Exact create retries never invoke this helper; only explicit owner retries do.
+export async function retryPostPublication(viewer: Viewer | null, id: string) {
+  const user = member(viewer);
+  const row = db
+    .prepare(
+      "SELECT id,title,body,kind,tags,status FROM posts WHERE id=? AND author_id=?",
+    )
+    .get(id, user.id) as
+    Pick<Row, "id" | "title" | "body" | "kind" | "tags" | "status"> | undefined;
+  if (!row) throw new ForumError(404, "글을 찾을 수 없습니다.");
+  const notice = getPublicationNotice(id, user.id);
+  if (row.status === "held" && notice?.canRequestReview)
+    return { id, status: row.status, reviewRequired: true };
+  if (row.status !== "pending") return { id, status: row.status };
+  const snapshot = {
+    title: row.title,
+    body: row.body,
+    kind: row.kind,
+    tags: JSON.parse(row.tags) as string[],
+  };
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM post_payloads WHERE author_id=? AND post_id=? AND payload_hash=?",
+      )
+      .get(user.id, id, payloadHash(snapshot))
+  )
+    throw new ForumError(409, "현재 글 내용을 다시 확인해 주세요.");
+  if (!notice?.canRetry) return { id, status: row.status };
+  if (!allowWriteAttempt(user.id))
+    throw new ForumError(429, "잠시 후 다시 시도해 주세요.");
+  return screenOwnedPost(user.id, id, snapshot, row.status);
+}
+
+function screenOwnedPost(
+  authorId: string,
+  id: string,
+  snapshot: { title: string; body: string; kind: PostKind; tags: string[] },
+  expectedStatus: PostDetail["status"] = "pending",
+  independentReview = false,
+) {
+  return controlPublication(
+    {
+      key: `${independentReview ? "review" : "post"}:${id}:${payloadHash(snapshot)}`,
+      snapshot,
+      independentReview,
+    },
+    (result) => {
+      const row = db
+        .prepare(
+          "SELECT title,body,kind,tags,status FROM posts WHERE id=? AND author_id=?",
+        )
+        .get(id, authorId) as
+        Pick<Row, "title" | "body" | "kind" | "tags" | "status"> | undefined;
+      if (!row) throw new ForumError(404, "글을 찾을 수 없습니다.");
+      if (row.status !== expectedStatus) return { id, status: row.status };
+      if (
+        payloadHash({
+          title: row.title,
+          body: row.body,
+          kind: row.kind,
+          tags: JSON.parse(row.tags),
+        }) !== payloadHash(snapshot)
+      )
+        throw new ForumError(409, "현재 글 내용을 다시 확인해 주세요.");
+      db.prepare(
+        "UPDATE posts SET status=?,screening_evidence=? WHERE id=? AND status=?",
+      ).run(result.status, result.evidence, id, expectedStatus);
+      if (result.status === "published")
+        recordPublishedRelations(
+          id,
+          result.relatedPublishedIds ?? [],
+          result.corpusHash,
+        );
+      return { id, status: result.status };
+    },
   );
-  db.prepare(
-    "UPDATE posts SET status=?,screening_evidence=? WHERE id=? AND status='pending'",
-  ).run(screening.status, screening.evidence, id);
-  return { id, status: screening.status };
+}
+export async function requestPostDuplicateReview(
+  viewer: Viewer | null,
+  id: string,
+) {
+  const user = member(viewer);
+  const row = db
+    .prepare(
+      "SELECT id,title,body,kind,tags,status FROM posts WHERE id=? AND author_id=?",
+    )
+    .get(id, user.id) as
+    Pick<Row, "id" | "title" | "body" | "kind" | "tags" | "status"> | undefined;
+  if (!row) throw new ForumError(404, "글을 찾을 수 없습니다.");
+  if (!getPublicationNotice(id, user.id)?.canRequestReview)
+    throw new ForumError(409, "이 글은 별도 확인을 요청할 수 없습니다.");
+  if (!allowWriteAttempt(user.id))
+    throw new ForumError(429, "잠시 후 다시 시도해 주세요.");
+  const snapshot = {
+    title: row.title,
+    body: row.body,
+    kind: row.kind,
+    tags: JSON.parse(row.tags) as string[],
+  };
+  return screenOwnedPost(user.id, id, snapshot, row.status, true);
 }
 export function createComment(
   viewer: Viewer | null,
@@ -338,6 +503,8 @@ export function createComment(
   input: unknown,
 ): Comment {
   const user = member(viewer);
+  if (!allowWriteAttempt(user.id))
+    throw new ForumError(429, "잠시 후 다시 작성해 주세요.");
   if (!input || typeof input !== "object")
     throw new ForumError(400, "잘못된 요청입니다.");
   const data = input as Record<string, unknown>;

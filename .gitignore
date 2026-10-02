@@ -6,7 +6,13 @@ node_modules/
 .next/
 .next-e2e-*/
 .next-verification/
+.next-duplicates-verification/
+.next-publication-verification/
+.next-auth-verification/
+.next-resource-curation-verification/
+.next-production/
 data/
 *.tsbuildinfo
 playwright-report/
 test-results/
+.next-auth-followup/

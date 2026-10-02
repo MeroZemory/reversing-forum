@@ -2,7 +2,7 @@ import { test, expect, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { basename, dirname, resolve } from "node:path";
-import { register, post } from "./helpers";
+import { register, post, verifyAndLogin } from "./helpers";
 
 function isolatedDatabase(info: TestInfo) {
   const databasePath = String(info.project.metadata.databasePath);
@@ -280,7 +280,8 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     });
   }
   await page.getByLabel("닉네임").fill("첫번째회원");
-  await page.getByLabel("이메일").fill(`ui-${randomUUID()}@example.com`);
+  const uiEmail = `ui-${randomUUID()}@example.com`;
+  await page.getByLabel("이메일").fill(uiEmail);
   const password = page.getByLabel("비밀번호", { exact: true });
   const passwordHint = page.getByText("비밀번호는 10~128자로 입력해 주세요.", {
     exact: true,
@@ -296,7 +297,12 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     .getByRole("button", { name: "비밀번호 숨기기", exact: true })
     .click();
   await expect(password).toHaveAttribute("type", "password");
-  await page.getByRole("button", { name: "회원가입", exact: true }).click();
+  await page
+    .getByRole("button", { name: "이메일로 가입", exact: true })
+    .click();
+  await expect(page).toHaveURL(`${origin}/verify-email?returnTo=%2Fnew`);
+  await verifyAndLogin(page.request, origin, uiEmail);
+  await page.goto("/new");
   await expect(page).toHaveURL(`${origin}/new`);
   await page
     .getByRole("navigation", { name: "계정" })
@@ -403,9 +409,14 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     await expect(
       account.getByRole("link", { name: "내 글", exact: true }),
     ).toBeVisible();
+    await account.locator(".account-menu > summary").click();
+    await expect(
+      account.getByRole("link", { name: "계정 설정", exact: true }),
+    ).toBeVisible();
     await expect(
       account.getByRole("button", { name: "로그아웃", exact: true }),
     ).toBeVisible();
+    await account.locator(".account-menu > summary").click();
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -429,9 +440,11 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
       .getByRole("navigation", { name: "계정" })
       .getByRole("link", { name: "내 글", exact: true }),
   ).toBeVisible();
+  await page.locator(".account-menu > summary").click();
   await expect(
     page.getByRole("button", { name: "로그아웃", exact: true }),
   ).toBeVisible();
+  await page.locator(".account-menu > summary").click();
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -472,6 +485,7 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
   ).toBeVisible();
   const structured = await page.request.get(postUrl);
   expect(await structured.text()).toContain("DiscussionForumPosting");
+  await page.locator(".account-menu > summary").click();
   await page.getByRole("button", { name: "로그아웃", exact: true }).click();
   await expect(
     page.getByRole("banner").getByRole("link", { name: "로그인", exact: true }),
@@ -973,18 +987,22 @@ test("인증 복귀 주소를 안전하게 처리하고 로그인 오류에서 �
   await page.getByLabel("이메일", { exact: true }).fill(user.email);
   const password = page.getByLabel("비밀번호", { exact: true });
   await password.fill("wrong-test-password");
-  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await page
+    .getByRole("button", { name: "이메일로 로그인", exact: true })
+    .click();
   const error = page.locator("#auth-error");
   await expect(error).toHaveAttribute("role", "alert");
   await expect(error).toHaveText(
-    "로그인하지 못했습니다. 이메일과 비밀번호를 확인해 주세요.",
+    "로그인하지 못했습니다. 이메일 인증을 완료했는지, 이메일과 비밀번호가 맞는지 확인해 주세요.",
   );
   await expect(error).toBeFocused();
   await expect(page.getByLabel("이메일", { exact: true })).toHaveValue(
     user.email,
   );
   await password.fill("Test-only-passphrase-42!");
-  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await page
+    .getByRole("button", { name: "이메일로 로그인", exact: true })
+    .click();
   await expect(page).toHaveURL(`${baseURL}${destination}`);
   await expect(
     page

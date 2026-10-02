@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { AuthLinks } from "./auth-links";
 import { BrandLogo } from "./brand-logo";
+import { AccountMenu } from "./account-menu";
 import type { Author } from "@/lib/types";
 
 export function SiteHeader({
@@ -21,7 +22,12 @@ export function SiteHeader({
               <Link className="account-link member-link" href="/me">
                 내 글
               </Link>
-              {logoutControl}
+              <AccountMenu>
+                <Link className="account-link" href="/account">
+                  계정 설정
+                </Link>
+                {logoutControl}
+              </AccountMenu>
             </>
           ) : (
             <AuthLinks />

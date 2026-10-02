@@ -38,6 +38,11 @@ export default defineConfig({
       DATABASE_PATH: resolve(`data/e2e-${runId}-${mode}.sqlite`),
       NEXT_DIST_DIR: `.next-e2e-${mode}`,
       JEV_MOCK: mode,
+      DUPLICATE_MOCK: "distinct",
+      AUTH_CONFIG_FILE: "",
+      RESEND_API_KEY: "",
+      RESEND_FROM: "",
+      FORUM_AUTH_TEST_MAILBOX: resolve(`data/e2e-${runId}-${mode}/mail.jsonl`),
     },
   })),
 });

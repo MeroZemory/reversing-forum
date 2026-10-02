@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, openSync, writeFileSync } from "node:fs";
+import { mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 import Database from "better-sqlite3";
@@ -28,6 +28,13 @@ const env = {
   SITE_URL: origin,
   NEXT_DIST_DIR: ".next-e2e-audit",
   JEV_MOCK: "pass",
+  DUPLICATE_MOCK: "distinct",
+  AUTH_CONFIG_FILE: "",
+  RESEND_API_KEY: "",
+  RESEND_FROM: "",
+  FORUM_AUTH_TEST_MAILBOX: resolve(
+    `data/ui-ux/${phase}-${Date.now()}.mail.jsonl`,
+  ),
 };
 const init = spawnSync(
   process.execPath,
@@ -188,7 +195,9 @@ try {
       .getByLabel("비밀번호", { exact: true })
       .fill("invalid-audit-password");
     expectingErrors = true;
-    await page.getByRole("button", { name: "로그인", exact: true }).click();
+    await page
+      .getByRole("button", { name: "이메일로 로그인", exact: true })
+      .click();
     await page.locator("#auth-error").waitFor();
     await page.waitForFunction(
       () => document.querySelector("#auth-error") === document.activeElement,
@@ -202,19 +211,38 @@ try {
     expectingErrors = false;
   }
   const member = await browser.newContext();
+  const auditEmail = `audit-${Date.now()}@example.com`;
+  const auditPassword = randomBytes(24).toString("hex");
   const registration = await member.request.post(
     `${origin}/api/auth/sign-up/email`,
     {
       headers: { Origin: origin },
       data: {
         name: "검수회원",
-        email: `audit-${Date.now()}@example.com`,
-        password: randomBytes(24).toString("hex"),
+        email: auditEmail,
+        password: auditPassword,
       },
     },
   );
   if (!registration.ok()) throw new Error("Audit account creation failed.");
   const user = (await registration.json()).user;
+  const captured = readFileSync(env.FORUM_AUTH_TEST_MAILBOX, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  const link = captured.findLast(
+    (item) => item.email === auditEmail && !item.reset,
+  )?.url;
+  assert(link && new URL(link).origin === origin);
+  assert((await member.request.get(link)).ok());
+  assert(
+    (
+      await member.request.post(`${origin}/api/auth/sign-in/email`, {
+        headers: { Origin: origin },
+        data: { email: auditEmail, password: auditPassword },
+      })
+    ).ok(),
+  );
   const memberPage = await member.newPage();
   memberPage.on("pageerror", (error) => evidence.errors.push(error.message));
   for (const path of ["/me", "/new", "/posts/audit-0"]) {

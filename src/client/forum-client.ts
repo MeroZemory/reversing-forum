@@ -64,6 +64,14 @@ async function writeJson<T>(
 }
 export const createPost = (command: CreatePostCommand) =>
   writeJson("/api/posts", command, isPostResult);
+export const retryPost = (postId: string) =>
+  writeJson(`/api/posts/${encodeURIComponent(postId)}/retry`, {}, isPostResult);
+export const reviewPost = (postId: string) =>
+  writeJson(
+    `/api/posts/${encodeURIComponent(postId)}/review`,
+    {},
+    isPostResult,
+  );
 export const createComment = (postId: string, command: CreateCommentCommand) =>
   writeJson(
     `/api/posts/${encodeURIComponent(postId)}/comments`,

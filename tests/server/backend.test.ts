@@ -16,7 +16,22 @@ import {
 } from "@/lib/types";
 
 const context = vi.hoisted(() => ({ headers: new Headers() }));
+const mail = vi.hoisted(() => ({ links: [] as string[] }));
+vi.mock("@/server/auth-mail", () => ({
+  mailConfigured: () => true,
+  googleConfigured: () => false,
+  sendAuthMail: async (_email: string, url: string) => {
+    mail.links.push(url);
+    return true;
+  },
+}));
 vi.mock("next/headers", () => ({ headers: async () => context.headers }));
+const duplicate = vi.hoisted(() => ({ run: vi.fn(), relations: vi.fn() }));
+vi.mock("@/server/duplicates/index", () => ({
+  assessDuplicate: duplicate.run,
+  recordPublishedRelations: duplicate.relations,
+  publicCorpusHash: () => "synthetic-corpus",
+}));
 let forum: typeof import("@/server/forum");
 let db: (typeof import("@/server/db"))["db"];
 let authModule: typeof import("@/server/auth");
@@ -47,9 +62,22 @@ beforeAll(async () => {
   const { getMigrations } = await import("better-auth/db/migration");
   await (await getMigrations(authModule.auth.options)).runMigrations();
   forum = await import("@/server/forum");
+  (await import("@/server/publication-control")).initPublicationTables();
 });
 beforeEach(() => {
   db.exec("DELETE FROM comments; DELETE FROM posts;");
+  db.exec(
+    "DELETE FROM publication_limits; DELETE FROM publication_attempts; DELETE FROM publication_lease;",
+  );
+  duplicate.relations.mockReset().mockImplementation(() => {
+    expect(db.inTransaction).toBe(true);
+  });
+  duplicate.run.mockReset().mockResolvedValue({
+    verdict: "distinct",
+    relatedPostIds: [],
+    evidence: "synthetic-duplicate-evidence",
+    corpusHash: "synthetic-corpus",
+  });
   context.headers = new Headers();
   process.env.JEV_MOCK = "pass";
   vi.restoreAllMocks();
@@ -59,6 +87,162 @@ afterAll(() => {
 });
 
 describe("publication and privacy", () => {
+  it("records assessed partial-contribution relations only when the normal post publishes", async () => {
+    db.prepare(
+      "INSERT INTO posts(id,author_id,author_name,title,body,kind,tags,status,created_at) VALUES('public-target','other','other','title','body','analysis','[]','published','old')",
+    ).run();
+    duplicate.run.mockResolvedValue({
+      verdict: "overlap",
+      relatedPostIds: ["public-target"],
+      evidence: "private comparison",
+      corpusHash: "synthetic-corpus",
+    });
+    const post = await forum.createPost(owner, input);
+    expect(duplicate.relations).toHaveBeenCalledWith(
+      post.id,
+      ["public-target"],
+      "synthetic-corpus",
+    );
+    expect(JSON.stringify(forum.getPost(post.id))).not.toContain(
+      "private comparison",
+    );
+  });
+  it("offers safe owner notices and routes duplicate appeals to independent review", async () => {
+    duplicate.run.mockResolvedValue({
+      verdict: "duplicate",
+      relatedPostIds: ["public-match", "private-match"],
+      evidence: "secret synthetic duplicate reasoning",
+      corpusHash: "synthetic-corpus",
+    });
+    const insert = db.prepare(
+      "INSERT INTO posts(id,author_id,author_name,title,body,kind,tags,status,created_at) VALUES(?,'unrelated','name','title','other body','analysis','[]',?,'old')",
+    );
+    insert.run("public-match", "published");
+    insert.run("private-match", "pending");
+    const post = await forum.createPost(owner, input);
+    expect(post.status).toBe("held");
+    const { getPublicationNotice } =
+      await import("@/server/publication-control");
+    expect(getPublicationNotice(post.id, other.id)).toBeNull();
+    expect(getPublicationNotice("missing", owner.id)).toBeNull();
+    expect(getPublicationNotice(post.id, owner.id)).toEqual({
+      reasonCode: "duplicate",
+      relatedPublishedIds: ["public-match"],
+      canRetry: false,
+      canRequestReview: true,
+    });
+    for (let n = 0; n < 4; n++)
+      expect(await forum.retryPostPublication(owner, post.id)).toEqual({
+        id: post.id,
+        status: "held",
+        reviewRequired: true,
+      });
+    expect(duplicate.run).toHaveBeenCalledTimes(1);
+    expect(getPublicationNotice(post.id, owner.id)?.canRetry).toBe(false);
+    expect(getPublicationNotice(post.id, owner.id)?.canRequestReview).toBe(
+      true,
+    );
+    db.prepare("UPDATE posts SET status='held' WHERE id='public-match'").run();
+    const notice = getPublicationNotice(post.id, owner.id)!;
+    expect(notice.relatedPublishedIds).toEqual([]);
+    expect(JSON.stringify(notice)).not.toContain("secret");
+    expect(JSON.stringify(notice)).not.toContain("private-match");
+  });
+  it("publishes a genuine new contribution after one independent comparison and rechecks the minimum gate", async () => {
+    duplicate.run.mockResolvedValueOnce({
+      verdict: "duplicate",
+      relatedPostIds: [],
+      evidence: "first assessment",
+      corpusHash: "synthetic-corpus",
+    });
+    const post = await forum.createPost(owner, input);
+    await expect(
+      forum.requestPostDuplicateReview(other, post.id),
+    ).rejects.toMatchObject({ status: 404 });
+    duplicate.run.mockResolvedValueOnce({
+      verdict: "overlap",
+      relatedPostIds: [],
+      evidence: "independent new contribution",
+      corpusHash: "synthetic-corpus",
+    });
+    process.env.JEV_MOCK = "pass";
+    expect(
+      (await forum.requestPostDuplicateReview(owner, post.id)).status,
+    ).toBe("published");
+    expect(duplicate.run.mock.calls[1][1]).toEqual({ independentReview: true });
+    await expect(
+      forum.requestPostDuplicateReview(owner, post.id),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(duplicate.run).toHaveBeenCalledTimes(2);
+  });
+  it("keeps a confirmed duplicate private and prevents repeated independent paid review", async () => {
+    duplicate.run.mockResolvedValue({
+      verdict: "duplicate",
+      relatedPostIds: [],
+      evidence: "unchanged contribution",
+      corpusHash: "synthetic-corpus",
+    });
+    const post = await forum.createPost(owner, input);
+    expect(
+      (await forum.requestPostDuplicateReview(owner, post.id)).status,
+    ).toBe("held");
+    await expect(
+      forum.requestPostDuplicateReview(owner, post.id),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(duplicate.run).toHaveBeenCalledTimes(2);
+    expect(forum.getPost(post.id)).toBeNull();
+  });
+  it("returns one immutable post for concurrent and later exact retries", async () => {
+    process.env.JEV_MOCK = "error";
+    const results = await Promise.all([
+      forum.createPost(owner, input),
+      forum.createPost(owner, input),
+    ]);
+    expect(results[0]).toEqual(results[1]);
+    expect(await forum.createPost(owner, input)).toEqual(results[0]);
+    expect(db.prepare("SELECT count(*) n FROM posts").get()).toEqual({ n: 1 });
+    expect(duplicate.run).toHaveBeenCalledTimes(1);
+    await expect(
+      forum.createPost(owner, { ...input, title: "different title" }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(duplicate.run).toHaveBeenCalledTimes(1);
+    // Another author's private matching post cannot affect this author.
+    expect((await forum.createPost(other, input)).id).not.toBe(results[0].id);
+  });
+  it("bounds explicit owner retries, rejects nonowners without revealing existence", async () => {
+    process.env.JEV_MOCK = "error";
+    const post = await forum.createPost(owner, input);
+    await expect(
+      forum.retryPostPublication(other, post.id),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      forum.retryPostPublication(other, "missing"),
+    ).rejects.toMatchObject({ status: 404 });
+    for (let n = 0; n < 4; n++)
+      expect((await forum.retryPostPublication(owner, post.id)).status).toBe(
+        "pending",
+      );
+    expect(duplicate.run).toHaveBeenCalledTimes(3);
+    expect(db.prepare("SELECT count(*) n FROM posts").get()).toEqual({ n: 1 });
+  });
+  it("binds idempotency to title, body, kind and all tags", async () => {
+    process.env.JEV_MOCK = "error";
+    const post = await forum.createPost(owner, input);
+    for (const change of [
+      { title: "new title" },
+      { kind: "question" },
+      { tags: ["other"] },
+    ])
+      await expect(
+        forum.createPost(owner, { ...input, ...change }),
+      ).rejects.toMatchObject({ status: 409 });
+    expect(await forum.createPost(owner, input)).toEqual(post);
+    expect(duplicate.run).toHaveBeenCalledTimes(1);
+    db.prepare("UPDATE posts SET title='changed' WHERE id=?").run(post.id);
+    await expect(
+      forum.retryPostPublication(owner, post.id),
+    ).rejects.toMatchObject({ status: 409 });
+  });
   it("persists pending before screening and never exposes it to other viewers", async () => {
     delete process.env.JEV_MOCK;
     process.env.TYPESAFE_API_KEY = "isolated-test-key";
@@ -81,6 +265,7 @@ describe("publication and privacy", () => {
       confidence: 0.98,
       probabilities: { allowed: 0.98, violation: 0.01, uncertain: 0.01 },
     };
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
     release(
       Response.json({
         answers: { spam: answer, harassment: answer, privacy: answer },
@@ -116,12 +301,39 @@ describe("publication and privacy", () => {
     await expect(
       forum.createPost(owner, { ...input, body: "짧음" }),
     ).rejects.toMatchObject({ status: 400 });
-    await forum.createPost(owner, input);
-    await expect(forum.createPost(owner, input)).rejects.toMatchObject({
-      status: 429,
-    });
+    const first = await forum.createPost(owner, input);
+    expect(await forum.createPost(owner, input)).toEqual(first);
+    await expect(
+      forum.createPost(owner, { ...input, title: "different title" }),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(
+      forum.createPost(owner, {
+        ...input,
+        body: "different sufficiently long body",
+      }),
+    ).rejects.toMatchObject({ status: 429 });
     expect(forum.listPosts()).toHaveLength(1);
   });
+  it.each([
+    { emailVerified: false, nicknameReady: true },
+    { emailVerified: true, nicknameReady: false },
+  ])(
+    "requires verified email and a chosen nickname before writes: %o",
+    async (flags) => {
+      const viewer = { ...owner, ...flags };
+      await expect(forum.createPost(viewer, input)).rejects.toMatchObject({
+        status: 403,
+      });
+      expect(() =>
+        forum.createComment(viewer, "missing", { body: "댓글" }),
+      ).toThrow();
+      expect(duplicate.run).not.toHaveBeenCalled();
+      expect(
+        db.prepare("SELECT COUNT(*) AS n FROM publication_attempts").get(),
+      ).toEqual({ n: 0 });
+      expect(forum.listPosts()).toEqual([]);
+    },
+  );
 });
 describe("public feed discovery", () => {
   function seed(
@@ -373,8 +585,8 @@ describe("two-level member comments", () => {
 });
 describe("Jev fail-closed screening", () => {
   it.each([
-    ["malformed JSON", () => new Response("not json"), "held"],
-    ["incomplete answers", () => Response.json({ answers: {} }), "held"],
+    ["malformed JSON", () => new Response("not json"), "pending"],
+    ["incomplete answers", () => Response.json({ answers: {} }), "pending"],
     [
       "API outage",
       () => new Response("unavailable", { status: 503 }),
@@ -394,7 +606,7 @@ describe("Jev fail-closed screening", () => {
     expect((await forum.createPost(owner, input)).status).toBe(status);
     expect(forum.listPosts()).toEqual([]);
   });
-  it("holds uncertain and low-confidence answers", async () => {
+  it("keeps uncertain and low-confidence answers pending", async () => {
     delete process.env.JEV_MOCK;
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
@@ -411,7 +623,7 @@ describe("Jev fail-closed screening", () => {
         ),
       }),
     );
-    expect((await forum.createPost(owner, input)).status).toBe("held");
+    expect((await forum.createPost(owner, input)).status).toBe("pending");
   });
   it("does not honor mock bypasses in production", async () => {
     vi.stubEnv("NODE_ENV", "production");
@@ -448,11 +660,6 @@ describe("real BetterAuth sessions and HTTP boundaries", () => {
       }),
     );
     expect(signup.status).toBe(200);
-    const cookies = signup.headers
-      .getSetCookie()
-      .map((c) => c.split(";")[0])
-      .join("; ");
-    expect(cookies).toContain("session_token");
     const login = (password: string) =>
       authModule.auth.handler(
         new Request("http://localhost:3000/api/auth/sign-in/email", {
@@ -465,7 +672,19 @@ describe("real BetterAuth sessions and HTTP boundaries", () => {
         }),
       );
     expect((await login("wrong-password-123456")).status).toBe(401);
-    expect((await login("test-password-123456")).status).toBe(200);
+    expect((await login("test-password-123456")).status).toBe(403);
+    expect(mail.links.length).toBeGreaterThan(0);
+    const verification = await authModule.auth.handler(
+      new Request(mail.links.at(-1)!),
+    );
+    expect(verification.status).toBeLessThan(400);
+    const authenticated = await login("test-password-123456");
+    expect(authenticated.status).toBe(200);
+    const cookies = authenticated.headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    expect(cookies).toContain("session_token");
     context.headers = new Headers({ cookie: cookies });
     expect((await authModule.getViewer())?.email).toBe("session@example.test");
     context.headers = new Headers({

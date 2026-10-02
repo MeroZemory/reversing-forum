@@ -21,6 +21,14 @@ export function AuthLinks() {
   const suffix =
     destination === "/" ? "" : `?returnTo=${encodeURIComponent(destination)}`;
 
+  if (authRoute) {
+    return (
+      <Link className="account-link" href="/">
+        글 둘러보기
+      </Link>
+    );
+  }
+
   return (
     <>
       <Link
