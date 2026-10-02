@@ -61,7 +61,8 @@
 }
 .resource-guide li a,
 .editorial-bundle li a {
-  display: inline-block;
+  display: block;
+  min-height: var(--target-size);
   padding-block: var(--space-3);
 }
 .resource-guide-all {

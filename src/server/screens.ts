@@ -94,25 +94,29 @@ export function loadFeedScreen(params: SearchParams): FeedScreenData {
       const activity = publicPosts.filter(
         (post) => post.author.role !== "editor" || post.commentCount > 0,
       );
-      const pageCount = Math.max(
-        1,
-        Math.ceil(activity.length / result.pageSize),
-      );
-      const page = Math.min(filters.page ?? 1, pageCount);
-      compactEditorial = {
-        posts: quiet.slice(0, 3).map(summary),
-        total: quiet.length,
-        activityTotal: activity.length,
-      };
-      result = {
-        ...result,
-        posts: activity.slice(
-          (page - 1) * result.pageSize,
-          page * result.pageSize,
-        ),
-        page,
-        pageCount,
-      };
+      // During initial seeding the articles themselves are the usable feed.
+      // Compact them once there is actual conversation to prioritize.
+      if (activity.length && quiet.length) {
+        const pageCount = Math.max(
+          1,
+          Math.ceil(activity.length / result.pageSize),
+        );
+        const page = Math.min(filters.page ?? 1, pageCount);
+        compactEditorial = {
+          posts: quiet.slice(0, 3).map(summary),
+          total: quiet.length,
+          activityTotal: activity.length,
+        };
+        result = {
+          ...result,
+          posts: activity.slice(
+            (page - 1) * result.pageSize,
+            page * result.pageSize,
+          ),
+          page,
+          pageCount,
+        };
+      }
     }
   }
   const from = feedHref({ ...filters, page: result.page });

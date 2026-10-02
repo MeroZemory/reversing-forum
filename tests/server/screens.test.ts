@@ -115,6 +115,11 @@ describe("screen data boundary", () => {
     serve(editorial.slice(0, 15));
     expect(loadFeedScreen({}).result.posts).toHaveLength(15);
     expect(loadFeedScreen({}).compactEditorial).toBeUndefined();
+    const quietOnly = editorial.map((value) => ({ ...value, commentCount: 0 }));
+    serve(quietOnly);
+    const initial = loadFeedScreen({});
+    expect(initial.compactEditorial).toBeUndefined();
+    expect(initial.result.posts).toHaveLength(30);
     serve([
       ...editorial,
       { ...post, id: "member" } as (typeof editorial)[number],
