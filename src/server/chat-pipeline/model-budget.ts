@@ -290,11 +290,11 @@ export function accountAvailable(
     active?.id === accountId &&
     active.paused !== true &&
     active.needsReauth !== true &&
-    typeof used === "number" &&
-    Number.isFinite(used) &&
-    used >= 0 &&
-    used <= 100 &&
-    (used < 100 || allowCreditUsage === true)
+    (allowCreditUsage === true ||
+      (typeof used === "number" &&
+        Number.isFinite(used) &&
+        used >= 0 &&
+        used < 100))
   );
 }
 

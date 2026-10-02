@@ -76,7 +76,14 @@ const env = batchCliEnvironment();
 async function activeAccount() {
   const { stdout } = await execute(
     process.execPath,
-    [ocxEntry, "account", "list", "openai", "--quota", "--json"],
+    [
+      ocxEntry,
+      "account",
+      "list",
+      "openai",
+      ...(allocation.allowCreditUsage === true ? [] : ["--quota"]),
+      "--json",
+    ],
     {
       windowsHide: true,
       encoding: "utf8",
@@ -85,7 +92,10 @@ async function activeAccount() {
       env,
     },
   );
-  return JSON.parse(stdout).accounts.find((a: { active: boolean }) => a.active);
+  const active = JSON.parse(stdout).accounts.filter(
+    (a: { active: boolean }) => a.active === true,
+  );
+  return active.length === 1 ? active[0] : undefined;
 }
 // Inspect only TOML section names. Never extract/print config values or credentials.
 async function mcpOverrides(): Promise<string[]> {
@@ -313,24 +323,28 @@ try {
       let stopped = false,
         checking = false,
         timedOut = false;
+      let stopReason: string | null = null;
+      let accountStatusFailures = 0;
       let exited = false;
       let pendingStop: Promise<void> | undefined;
       let stopFailed = false;
-      const stop = () => {
+      const stop = (reason = "signal") => {
         stopped = true;
+        stopReason ??= reason;
         if (exited || pendingStop) return;
         pendingStop = stopCodexProcess(child).catch(() => {
           if (!exited) stopFailed = true;
         });
       };
-      process.on("SIGINT", stop);
-      process.on("SIGTERM", stop);
+      const onSignal = () => stop("signal");
+      process.on("SIGINT", onSignal);
+      process.on("SIGTERM", onSignal);
       // Bound subscription usage and avoid one stalled request holding a batch
       // lane indefinitely. Unknown usage retains its budget reservation.
       const deadline = setTimeout(
         () => {
           timedOut = true;
-          stop();
+          stop("deadline");
         },
         mode === "candidate" ? 600_000 : mode === "draft" ? 900_000 : 1_200_000,
       );
@@ -347,11 +361,14 @@ try {
                 allocation.allowCreditUsage,
               )
             ) {
-              stop();
+              stop("account-unavailable-or-changed");
             }
           })
           .catch(() => {
-            stop();
+            // A transient OCX lookup failure does not show that the account
+            // changed. Let this already reserved turn finish; the mandatory
+            // final identity check still keeps failure and usage private.
+            accountStatusFailures++;
           })
           .finally(() => {
             checking = false;
@@ -368,8 +385,8 @@ try {
       clearTimeout(deadline);
       await pendingCheck;
       await pendingStop;
-      process.off("SIGINT", stop);
-      process.off("SIGTERM", stop);
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
       try {
         if (
           !accountAvailable(
@@ -378,9 +395,10 @@ try {
             allocation.allowCreditUsage,
           )
         )
-          stopped = true;
+          stop("account-unavailable-or-changed");
       } catch {
-        stopped = true;
+        accountStatusFailures++;
+        stop("account-status-unavailable");
       }
       const usage = collector.finalUsage();
       const diagnosticCodes = result !== 0 ? cliDiagnosticCodes(stderr) : [];
@@ -408,6 +426,8 @@ try {
         reservedProxyUsd,
         settled,
         stopped,
+        stopReason,
+        accountStatusFailures,
         timedOut,
         stopFailed,
         exitCode: result,

@@ -201,7 +201,22 @@ describe("pipeline model proxy budget", () => {
       ).toBe(false);
       expect(
         accountAvailable({ id: config.accountId }, config.accountId, true),
+      ).toBe(true);
+      expect(
+        accountAvailable(
+          { id: config.accountId, paused: true },
+          config.accountId,
+          true,
+        ),
       ).toBe(false);
+      expect(
+        accountAvailable(
+          { id: config.accountId, needsReauth: true },
+          config.accountId,
+          true,
+        ),
+      ).toBe(false);
+      expect(accountAvailable(undefined, config.accountId, true)).toBe(false);
     } finally {
       ledger.close();
     }

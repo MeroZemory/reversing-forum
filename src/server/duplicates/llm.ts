@@ -360,7 +360,14 @@ async function account(
   const stdout = await new Promise<string>((done, reject) => {
     execFile(
       process.execPath,
-      [ocx, "account", "list", "openai", "--quota", "--json"],
+      [
+        ocx,
+        "account",
+        "list",
+        "openai",
+        ...(allowCreditUsage === true ? [] : ["--quota"]),
+        "--json",
+      ],
       {
         windowsHide: true,
         encoding: "utf8",
