@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import {
   ModelBudget,
   normalizeUsage,
@@ -36,6 +38,185 @@ const usage = {
   cached_input_tokens: 80_000,
   output_tokens: 10_000,
 };
+
+describe("Codex final account guard", () => {
+  // Run the production final check and settlement without CLI calls or files.
+  const source = readFileSync(resolve("scripts/chat-codex-run.ts"), "utf8");
+  const start = source.indexOf('process.off("SIGTERM", onSignal);');
+  const end = source.indexOf("const receipt =", start);
+  if (start < 0 || end < 0) throw new Error("final-account-guard-not-found");
+  const body = ts.transpileModule(source.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const available = { id: config.accountId, quota: { weeklyPercent: 20 } };
+
+  async function check(
+    lookup: () => Promise<Parameters<typeof accountAvailable>[0]>,
+    options: {
+      allowCreditUsage?: boolean;
+      exitCode?: number | null;
+      rawUsage?: unknown;
+      alreadyStopped?: boolean;
+    } = {},
+  ) {
+    const ledger = new ModelBudget(":memory:", config);
+    const reservationId = ledger.reserve(
+      "gpt-6-luna",
+      "candidate",
+      0.1,
+      "test",
+    )!;
+    const delays: number[] = [];
+    try {
+      const receipt = await runInNewContext(
+        `(async () => {
+          let stopped = alreadyStopped, stopReason = null, accountStatusFailures = 0;
+          const stop = (reason) => { stopped = true; stopReason ??= reason; };
+          ${body}
+          return { stopped, stopReason, accountStatusFailures, settled };
+        })()`,
+        {
+          process: { off: () => {} },
+          onSignal: () => {},
+          activeAccount: lookup,
+          accountAvailable,
+          allocation: { ...config, allowCreditUsage: options.allowCreditUsage },
+          setTimeout: (done: () => void, delay: number) => {
+            delays.push(delay);
+            done();
+          },
+          collector: {
+            finalUsage: () => null,
+            rawUsage: () => ("rawUsage" in options ? options.rawUsage : usage),
+          },
+          result: "exitCode" in options ? options.exitCode : 0,
+          alreadyStopped: options.alreadyStopped ?? false,
+          cliDiagnosticCodes: () => [],
+          writeFileSync: () => {},
+          join,
+          directory: "synthetic",
+          stderr: "",
+          prompt: "synthetic",
+          privateCliDiagnostic: () => "",
+          ledger,
+          reservationId,
+          model: "gpt-6-luna",
+        },
+      );
+      return { receipt, delays, budget: ledger.summary() };
+    } finally {
+      ledger.close();
+    }
+  }
+
+  it.each([1, 2])(
+    "settles an exit-zero call after %i lookup failures and a fresh matching account",
+    async (failures) => {
+      const lookup = vi.fn<() => Promise<typeof available>>();
+      for (let i = 0; i < failures; i++)
+        lookup.mockRejectedValueOnce(new Error("synthetic OCX lookup failure"));
+      lookup.mockResolvedValue(available);
+      const { receipt, delays, budget } = await check(lookup);
+      expect(lookup).toHaveBeenCalledTimes(failures + 1);
+      expect(delays).toEqual(Array(failures).fill(250));
+      expect(receipt).toEqual({
+        stopped: false,
+        stopReason: null,
+        accountStatusFailures: failures,
+        settled: true,
+      });
+      expect(budget.unknownRequests).toBe(0);
+    },
+  );
+
+  it("exhausts three failed fresh lookups and keeps the reservation", async () => {
+    const lookup = vi
+      .fn()
+      .mockRejectedValue(new Error("synthetic OCX failure"));
+    const { receipt, delays, budget } = await check(lookup);
+    expect(lookup).toHaveBeenCalledTimes(3);
+    expect(delays).toEqual([250, 250]);
+    expect(receipt).toEqual({
+      stopped: true,
+      stopReason: "account-status-unavailable",
+      accountStatusFailures: 3,
+      settled: false,
+    });
+    expect(budget.unknownRequests).toBe(1);
+    expect(budget.chargedOrReservedProxyUsd).toBe(0.1);
+  });
+
+  it.each([
+    { ...available, id: "different" },
+    { ...available, paused: true },
+    { ...available, needsReauth: true },
+    undefined,
+  ])(
+    "does not retry a fresh unavailable or changed account: %j",
+    async (account) => {
+      const lookup = vi.fn().mockResolvedValue(account);
+      const { receipt, delays, budget } = await check(lookup, {
+        allowCreditUsage: true,
+      });
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(delays).toEqual([]);
+      expect(receipt.stopReason).toBe("account-unavailable-or-changed");
+      expect(receipt.accountStatusFailures).toBe(0);
+      expect(receipt.settled).toBe(false);
+      expect(budget.unknownRequests).toBe(1);
+    },
+  );
+
+  it("stops immediately on a mismatch after a lookup error", async () => {
+    const lookup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("synthetic OCX failure"))
+      .mockResolvedValueOnce({ ...available, id: "different" })
+      .mockResolvedValue(available);
+    const { receipt, delays } = await check(lookup);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(delays).toEqual([250]);
+    expect(receipt.stopReason).toBe("account-unavailable-or-changed");
+    expect(receipt.settled).toBe(false);
+  });
+
+  it.each([false, true])(
+    "preserves subscription quota behavior with credit mode %s",
+    async (allowCreditUsage) => {
+      const lookup = vi.fn().mockResolvedValue({
+        ...available,
+        quota: { weeklyPercent: 100 },
+      });
+      const { receipt, delays } = await check(lookup, { allowCreditUsage });
+      expect(lookup).toHaveBeenCalledTimes(1);
+      expect(delays).toEqual([]);
+      expect(receipt.stopped).toBe(!allowCreditUsage);
+      expect(receipt.settled).toBe(allowCreditUsage);
+    },
+  );
+
+  it.each([
+    { exitCode: 1 },
+    { exitCode: null },
+    { rawUsage: null },
+    { rawUsage: { input_tokens: 10, output_tokens: 5 } },
+    { alreadyStopped: true },
+  ])(
+    "does not settle a failed, unknown or stopped call after recovery: %j",
+    async (options) => {
+      const lookup = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("synthetic OCX failure"))
+        .mockResolvedValue(available);
+      const { receipt, budget } = await check(lookup, options);
+      expect(lookup).toHaveBeenCalledTimes(2);
+      expect(receipt.settled).toBe(false);
+      expect(budget.unknownRequests).toBe(1);
+      expect(budget.chargedOrReservedProxyUsd).toBe(0.1);
+    },
+  );
+});
+
 describe("pipeline model proxy budget", () => {
   it("reserves the actual repair model cost before admitting a more expensive call", () => {
     const ledger = new ModelBudget(":memory:", config);

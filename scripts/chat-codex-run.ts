@@ -387,18 +387,26 @@ try {
       await pendingStop;
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
-      try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let account;
+        try {
+          account = await activeAccount();
+        } catch {
+          accountStatusFailures++;
+          if (attempt === 2) stop("account-status-unavailable");
+          else await new Promise((done) => setTimeout(done, 250));
+          continue;
+        }
+        // Retry lookup errors only; a fresh unavailable/changed account is final.
         if (
           !accountAvailable(
-            await activeAccount(),
+            account,
             allocation.accountId,
             allocation.allowCreditUsage,
           )
         )
           stop("account-unavailable-or-changed");
-      } catch {
-        accountStatusFailures++;
-        stop("account-status-unavailable");
+        break;
       }
       const usage = collector.finalUsage();
       const diagnosticCodes = result !== 0 ? cliDiagnosticCodes(stderr) : [];
