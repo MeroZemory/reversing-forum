@@ -7,7 +7,13 @@ import {
   it,
   vi,
 } from "vitest";
-import type { Viewer } from "@/lib/types";
+import {
+  getPostPurpose,
+  purposeLabels,
+  type PostKind,
+  type PostStatus,
+  type Viewer,
+} from "@/lib/types";
 
 const context = vi.hoisted(() => ({ headers: new Headers() }));
 vi.mock("next/headers", () => ({ headers: async () => context.headers }));
@@ -117,6 +123,220 @@ describe("publication and privacy", () => {
     expect(forum.listPosts()).toHaveLength(1);
   });
 });
+describe("public feed discovery", () => {
+  function seed(
+    id: string,
+    {
+      kind = "analysis",
+      tags = ["assembly"],
+      status = "published",
+      title = "공개 분석",
+      body = "분석 과정과 결과를 공유합니다.",
+      createdAt = "2026-10-01T00:00:00.000Z",
+    }: {
+      kind?: PostKind;
+      tags?: string[];
+      status?: PostStatus;
+      title?: string;
+      body?: string;
+      createdAt?: string;
+    } = {},
+  ) {
+    db.prepare(
+      "INSERT INTO posts(id,author_id,author_name,title,body,kind,tags,status,created_at,screening_evidence) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      id,
+      owner.id,
+      owner.name,
+      title,
+      body,
+      kind,
+      JSON.stringify(tags),
+      status,
+      createdAt,
+      "private screening evidence",
+    );
+  }
+
+  it("maps historical kinds to purposes without changing stored kinds or legacy filtering", () => {
+    seed("analysis");
+    seed("workflow", { kind: "workflow" });
+    seed("question", { kind: "question" });
+    seed("discussion", { kind: "discussion" });
+    expect(purposeLabels).toEqual({
+      question: "질문",
+      share: "공유",
+      discussion: "자유",
+    });
+    expect(getPostPurpose("analysis")).toBe("share");
+    expect(getPostPurpose("workflow")).toBe("share");
+    expect(getPostPurpose("question")).toBe("question");
+    expect(getPostPurpose("discussion")).toBe("discussion");
+    expect(
+      forum.listPostPage({ purpose: "share" }).posts.map((p) => p.kind),
+    ).toEqual(["analysis", "workflow"]);
+    expect(
+      forum.listPostPage({ purpose: "question" }).posts.map((p) => p.id),
+    ).toEqual(["question"]);
+    expect(
+      forum.listPostPage({ purpose: "discussion" }).posts.map((p) => p.id),
+    ).toEqual(["discussion"]);
+    expect(forum.listPosts({ kind: "analysis" }).map((p) => p.id)).toEqual([
+      "analysis",
+    ]);
+    expect(forum.listPostPage().posts).toEqual(forum.listPosts());
+  });
+
+  it("matches only exact JSON tags case-insensitively, treating wildcard and escaped characters literally", () => {
+    seed("exact", { tags: ["IDA", "100%_\\path", 'say "hello"', "분석"] });
+    seed("substring", { tags: ["IDA Pro", "100ABXpath", "재분석"] });
+    seed("body", {
+      tags: [],
+      title: "IDA",
+      body: 'IDA 100%_\\path say "hello" 분석',
+    });
+    for (const tag of [" ida ", "100%_\\path", 'say "hello"', "분석"]) {
+      const result = forum.listPostPage({ tag });
+      expect(result.total).toBe(1);
+      expect(result.posts.map((p) => p.id)).toEqual(["exact"]);
+    }
+    expect(forum.listPostPage({ tag: "%" }).total).toBe(0);
+    expect(forum.listPostPage({ tag: "_" }).total).toBe(0);
+    expect(forum.listPostPage({ query: "IDA" }).total).toBe(3);
+  });
+
+  it("intersects query, purpose and tag for both the count and page, preserving escaped search", () => {
+    seed("a", { title: "needle 50%_\\", tags: ["IDA"] });
+    seed("b", { kind: "workflow", title: "needle 50%_\\", tags: ["ida"] });
+    seed("wrong-purpose", {
+      kind: "question",
+      title: "needle 50%_\\",
+      tags: ["IDA"],
+    });
+    seed("wrong-tag", { title: "needle 50%_\\", tags: ["IDA Pro"] });
+    seed("wrong-query", { title: "needle 50ABX", tags: ["IDA"] });
+    seed("held", { status: "held", title: "needle 50%_\\", tags: ["IDA"] });
+    seed("pending", {
+      status: "pending",
+      title: "needle 50%_\\",
+      tags: ["IDA"],
+    });
+    const options = {
+      query: " 50%_\\ ",
+      purpose: "share" as const,
+      tag: "ida",
+      pageSize: 1,
+    };
+    const first = forum.listPostPage(options);
+    expect(first).toMatchObject({
+      total: 2,
+      page: 1,
+      pageSize: 1,
+      pageCount: 2,
+    });
+    expect(first.posts.map((p) => p.id)).toEqual(["a"]);
+    const last = forum.listPostPage({ ...options, page: Number.MAX_VALUE });
+    expect(last).toMatchObject({ total: 2, page: 2, pageCount: 2 });
+    expect(last.posts.map((p) => p.id)).toEqual(["b"]);
+    expect(JSON.stringify(first)).not.toContain("screening");
+    expect(first.posts[0]).not.toHaveProperty("body");
+    expect(first.posts[0]).not.toHaveProperty("status");
+  });
+
+  it("orders pages by newest timestamp and then id with no repeated or skipped posts", () => {
+    seed("c");
+    seed("a");
+    seed("b");
+    seed("new", { createdAt: "2026-10-02T00:00:00.000Z" });
+    seed("old", { createdAt: "2026-09-30T00:00:00.000Z" });
+    const pages = [1, 2, 3].map((page) =>
+      forum.listPostPage({ page, pageSize: 2 }),
+    );
+    expect(pages.flatMap((p) => p.posts.map((post) => post.id))).toEqual([
+      "new",
+      "a",
+      "b",
+      "c",
+      "old",
+    ]);
+    expect(pages.every((p) => p.total === 5 && p.pageCount === 3)).toBe(true);
+    expect(forum.listPostPage({ page: 2, pageSize: 2 })).toEqual(pages[1]);
+  });
+
+  it("normalizes empty, negative, fractional, excessive and non-finite pagination safely", () => {
+    expect(forum.listPostPage({ page: 999 })).toEqual({
+      posts: [],
+      total: 0,
+      page: 1,
+      pageSize: 30,
+      pageCount: 1,
+    });
+    for (let i = 0; i < 105; i++) seed(`post-${String(i).padStart(3, "0")}`);
+    expect(forum.listPostPage({ pageSize: Number.MAX_VALUE })).toMatchObject({
+      total: 105,
+      pageSize: 100,
+      pageCount: 2,
+    });
+    expect(forum.listPostPage({ pageSize: -1, page: -1 })).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      pageCount: 105,
+    });
+    expect(forum.listPostPage({ pageSize: 2.9, page: 2.9 })).toMatchObject({
+      page: 2,
+      pageSize: 2,
+      pageCount: 53,
+    });
+    for (const value of [NaN, Infinity, -Infinity]) {
+      expect(
+        forum.listPostPage({ page: value, pageSize: value }),
+      ).toMatchObject({ page: 1, pageSize: 30, pageCount: 4 });
+    }
+    expect(forum.listPostPage({ tag: "missing", page: 99 })).toMatchObject({
+      posts: [],
+      total: 0,
+      page: 1,
+      pageCount: 1,
+    });
+  });
+
+  it("counts public posts once per topic, merges case variants and hides private tags and counts", () => {
+    seed("a", { tags: ["IDA", "ida", "assembly", ""] });
+    seed("b", { tags: ["ida", "assembly", "zebra"] });
+    seed("c", { tags: ["IDA", "binary"] });
+    seed("held", { status: "held", tags: ["IDA", "held-only"] });
+    seed("pending", { status: "pending", tags: ["assembly", "pending-only"] });
+    expect(forum.listPostPage().total).toBe(3);
+    expect(forum.listPostPage({ tag: "held-only" }).total).toBe(0);
+    expect(forum.listPostPage({ tag: "pending-only" }).total).toBe(0);
+    expect(forum.listPublicTopics()).toEqual([
+      { tag: "IDA", count: 3 },
+      { tag: "assembly", count: 2 },
+      { tag: "binary", count: 1 },
+      { tag: "zebra", count: 1 },
+    ]);
+    for (const topic of forum.listPublicTopics()) {
+      expect(forum.listPostPage({ tag: topic.tag }).total).toBe(topic.count);
+    }
+    expect(forum.listPublicTopics(2)).toHaveLength(2);
+    expect(forum.listPublicTopics(-1)).toEqual([{ tag: "IDA", count: 3 }]);
+    expect(forum.listPublicTopics(NaN)).toEqual(forum.listPublicTopics());
+  });
+
+  it("returns no topics or public counts when only private posts exist", () => {
+    seed("held", { status: "held", tags: ["secret"] });
+    seed("pending", { status: "pending", tags: ["secret"] });
+    expect(forum.listPublicTopics()).toEqual([]);
+    expect(forum.listPostPage()).toEqual({
+      posts: [],
+      total: 0,
+      page: 1,
+      pageSize: 30,
+      pageCount: 1,
+    });
+  });
+});
+
 describe("two-level member comments", () => {
   it("accepts a reply and rejects cross-post replies, reply-to-reply, anonymous writes and flooding", async () => {
     const first = await forum.createPost(owner, input);

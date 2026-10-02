@@ -1,10 +1,12 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import {
+  getPostPurpose,
   postKinds,
   type Comment,
   type PostDetail,
   type PostKind,
+  type PostPurpose,
   type PostSummary,
   type Viewer,
 } from "@/lib/types";
@@ -82,6 +84,91 @@ export function listPosts({
     return summary;
   });
 }
+export function listPostPage({
+  query,
+  purpose,
+  tag,
+  page = 1,
+  pageSize = 30,
+}: {
+  query?: string;
+  purpose?: PostPurpose;
+  tag?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): {
+  posts: PostSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+} {
+  const clauses = ["p.status='published'"];
+  const args: (string | number)[] = [];
+  if (query?.trim()) {
+    clauses.push(
+      "(p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\' OR p.tags LIKE ? ESCAPE '\\')",
+    );
+    const term = `%${query
+      .trim()
+      .slice(0, 200)
+      .replace(/[\\%_]/g, "\\$&")}%`;
+    args.push(term, term, term);
+  }
+  if (purpose) {
+    const kinds = postKinds.filter((kind) => getPostPurpose(kind) === purpose);
+    clauses.push(`p.kind IN (${kinds.map(() => "?").join(",") || "NULL"})`);
+    args.push(...kinds);
+  }
+  if (tag?.trim()) {
+    clauses.push(
+      "EXISTS (SELECT 1 FROM json_each(p.tags) t WHERE t.type='text' AND t.value = ? COLLATE NOCASE)",
+    );
+    args.push(tag.trim());
+  }
+  const where = clauses.join(" AND ");
+  const size = Number.isFinite(pageSize)
+    ? Math.max(1, Math.min(100, Math.trunc(pageSize)))
+    : 30;
+  // Keep the count and page in the same read snapshot.
+  return db.transaction(() => {
+    const { total } = db
+      .prepare(`SELECT COUNT(*) AS total FROM posts p WHERE ${where}`)
+      .get(...args) as { total: number };
+    const pageCount = Math.max(1, Math.ceil(total / size));
+    const currentPage = Number.isFinite(page)
+      ? Math.max(1, Math.min(pageCount, Math.trunc(page)))
+      : 1;
+    const posts = (
+      db
+        .prepare(
+          `${select} WHERE ${where} ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?`,
+        )
+        .all(...args, size, (currentPage - 1) * size) as Row[]
+    ).map((r) => {
+      const { body: _body, status: _status, ...summary } = detail(r);
+      return summary;
+    });
+    return { posts, total, page: currentPage, pageSize: size, pageCount };
+  })();
+}
+
+export function listPublicTopics(limit = 20): { tag: string; count: number }[] {
+  const size = Number.isFinite(limit)
+    ? Math.max(1, Math.min(100, Math.trunc(limit)))
+    : 20;
+  return db
+    .prepare(
+      `SELECT MIN(t.value) AS tag, COUNT(DISTINCT p.id) AS count
+       FROM posts p, json_each(p.tags) t
+       WHERE p.status='published' AND t.type='text' AND trim(t.value)<>''
+       GROUP BY t.value COLLATE NOCASE
+       ORDER BY count DESC, tag COLLATE NOCASE, tag
+       LIMIT ?`,
+    )
+    .all(size) as { tag: string; count: number }[];
+}
+
 export function listMyPosts(userId: string): PostDetail[] {
   return (
     db

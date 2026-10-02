@@ -5,6 +5,25 @@ export const postKinds = [
   "workflow",
 ] as const;
 export type PostKind = (typeof postKinds)[number];
+export type PostPurpose = "question" | "share" | "discussion";
+
+export const purposeLabels: Record<PostPurpose, string> = {
+  question: "질문",
+  share: "공유",
+  discussion: "자유",
+};
+
+export const postKindToPurpose: Record<PostKind, PostPurpose> = {
+  question: "question",
+  analysis: "share",
+  workflow: "share",
+  discussion: "discussion",
+};
+
+export function getPostPurpose(kind: PostKind): PostPurpose {
+  return postKindToPurpose[kind];
+}
+
 export type PostStatus = "pending" | "published" | "held";
 
 export type Author = { id: string; name: string };
