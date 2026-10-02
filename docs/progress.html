@@ -1,0 +1,1990 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Reversing All 진행 보고</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #172d43;
+        --muted: #566a7f;
+        --line: #d8e1e8;
+        --paper: #fff;
+        --bg: #f7f9fb;
+        --accent: #245e84;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          16px/1.75 "Malgun Gothic",
+          "Apple SD Gothic Neo",
+          system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 1360px;
+        padding: 48px 36px 72px;
+        margin: auto;
+      }
+      h1 {
+        font-size: clamp(28px, 4vw, 42px);
+        line-height: 1.3;
+        letter-spacing: -0.03em;
+        margin: 16px 0 24px;
+      }
+      h2 {
+        font-size: 24px;
+        line-height: 1.4;
+        margin: 0 0 20px;
+      }
+      p {
+        max-width: 78ch;
+        margin: 12px 0 20px;
+        word-break: keep-all;
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: var(--accent);
+        text-underline-offset: 4px;
+      }
+      a:focus-visible,
+      button:focus-visible {
+        outline: 3px solid #347ea8;
+        outline-offset: 4px;
+      }
+      .meta {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .lead {
+        font-size: 19px;
+        max-width: 75ch;
+      }
+      .approval {
+        display: inline-block;
+        border: 1px solid #bf9b4b;
+        background: #fff7df;
+        color: #725217;
+        padding: 4px 12px;
+        font-size: 13px;
+        border-radius: 5px;
+      }
+      .notice {
+        border-left: 4px solid #bf9b4b;
+        padding: 16px 20px;
+        background: #fff9ea;
+        margin: 28px 0;
+      }
+      .notice p {
+        margin: 0;
+      }
+      section {
+        margin-top: 56px;
+        padding-top: 32px;
+        border-top: 1px solid var(--line);
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 20px 0;
+      }
+      .state {
+        display: inline-block;
+        font-size: 12px;
+        line-height: 1.6;
+        font-weight: 700;
+        border-radius: 5px;
+        padding: 4px 9px;
+      }
+      .verified {
+        background: #eaf4ec;
+        color: #256046;
+      }
+      .working {
+        background: #edf4fb;
+        color: #285587;
+      }
+      .ready {
+        background: #f1f0fc;
+        color: #655299;
+      }
+      .blocked {
+        background: #fff0e9;
+        color: #944723;
+      }
+      .unverified {
+        background: #fff7df;
+        color: #7a561a;
+      }
+      .waiting {
+        background: #f1f3f5;
+        color: #536270;
+      }
+      .graph-scroll {
+        overflow: auto;
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 12px;
+        padding: 20px;
+        max-height: 760px;
+      }
+      .graph-scroll svg {
+        display: block;
+        width: 100%;
+        min-width: 1200px;
+        height: auto;
+      }
+      svg text {
+        font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+      }
+      .node rect {
+        stroke-width: 1.5;
+      }
+      .node-id {
+        font-size: 16px;
+        fill: #536270;
+      }
+      .node-label {
+        font-size: 20px;
+        fill: #172d43;
+        font-weight: 700;
+      }
+      .node.verified rect {
+        fill: #eaf4ec;
+        stroke: #4f856c;
+      }
+      .node.working rect {
+        fill: #edf4fb;
+        stroke: #4a739e;
+      }
+      .node.ready rect {
+        fill: #f1f0fc;
+        stroke: #8573ac;
+      }
+      .node.blocked rect {
+        fill: #fff0e9;
+        stroke: #b46943;
+      }
+      .node.unverified rect {
+        fill: #fff7df;
+        stroke: #af8a43;
+      }
+      .node.waiting rect {
+        fill: #f1f3f5;
+        stroke: #8b98a5;
+      }
+      .edge {
+        fill: none;
+        stroke: #738394;
+        stroke-width: 1.6;
+      }
+      .edge.conditional {
+        stroke-dasharray: 6 5;
+      }
+      .edge.completion {
+        stroke-width: 2.2;
+      }
+      .edge-label {
+        font-size: 15px;
+        fill: #36536b;
+        paint-order: stroke;
+        stroke: #fff;
+        stroke-width: 5px;
+        stroke-linejoin: round;
+      }
+      svg a:hover rect,
+      svg a:focus rect {
+        stroke: #1b557c;
+        stroke-width: 3;
+      }
+      .table-scroll {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        border-radius: 10px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        min-width: 730px;
+      }
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 16px 18px;
+        border-bottom: 1px solid var(--line);
+        word-break: keep-all;
+        overflow-wrap: anywhere;
+      }
+      thead th {
+        font-size: 12px;
+        color: var(--muted);
+        background: #f5f8fa;
+      }
+      tbody th {
+        width: 21%;
+        font-weight: 600;
+      }
+      td p {
+        margin: 10px 0 0;
+        max-width: none;
+      }
+      td:last-child {
+        min-width: 170px;
+      }
+      tr:target {
+        background: #eef5fb;
+        outline: 2px solid #407da3;
+        outline-offset: -2px;
+      }
+      details {
+        margin-top: 24px;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .rules li,
+      .refs li {
+        margin: 12px 0;
+        max-width: 90ch;
+      }
+      code {
+        font:
+          13px ui-monospace,
+          Consolas,
+          monospace;
+        overflow-wrap: anywhere;
+      }
+      footer {
+        margin-top: 64px;
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+      }
+      .graph-hint {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 28px 18px 48px;
+        }
+        .lead {
+          font-size: 17px;
+        }
+        section {
+          margin-top: 40px;
+          padding-top: 24px;
+        }
+        .graph-scroll {
+          padding: 12px;
+        }
+        th,
+        td {
+          padding: 12px;
+        }
+        h2 {
+          font-size: 22px;
+        }
+      }
+      @media print {
+        body {
+          background: white;
+        }
+        main {
+          max-width: none;
+          padding: 18px;
+        }
+        .graph-scroll {
+          max-height: none;
+          overflow: visible;
+          padding: 0;
+        }
+        .graph-scroll svg {
+          min-width: 0;
+        }
+        .table-scroll {
+          overflow: visible;
+        }
+        table {
+          min-width: 0;
+          font-size: 11px;
+        }
+        section {
+          break-inside: avoid;
+        }
+        details {
+          display: block;
+        }
+      }
+
+      .prose h3 {
+        font-size: 20px;
+        margin: 28px 0 16px;
+      }
+      .prose h4 {
+        font-size: 18px;
+        margin: 24px 0 12px;
+      }
+      .prose pre {
+        overflow: auto;
+        background: #f1f4f7;
+        padding: 16px;
+        border-radius: 8px;
+      }
+      .prose li {
+        max-width: 90ch;
+        margin: 10px 0;
+      }
+      .prose table {
+        display: block;
+        overflow: auto;
+        max-width: 100%;
+        min-width: 0;
+      }
+      .prose table td,
+      .prose table th {
+        min-width: 150px;
+      }
+      .appendix {
+        margin-top: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        padding: 20px;
+      }
+      .appendix > summary {
+        font-size: 18px;
+      }
+      .approval {
+        background: #eaf4ec;
+        color: #256046;
+        border-color: #7b9e8b;
+      }
+      :target {
+        scroll-margin-top: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p class="meta">Reversing All · 관리와 검수용 진행 보고</p>
+        <h1>진행 보고</h1>
+        <span class="approval">DAG 합의·사용자 확인 완료</span>
+        <p class="lead">
+          준비된 항목부터 가공·검토·게시를 이어갑니다. 운영 준비와 전체 자료 처리는 병행하며, 필요한
+          산출물에 따라 담당을 나눕니다.
+        </p>
+        <p class="meta">
+          진행 기록 2026-10-03 02:56 KST · 기준 커밋 83bce93 · DAG 구조: Sol 6.1/max·Astra 6/max
+          상호 합의
+        </p>
+        <p>
+          <a href="#status">진행 상태</a> · <a href="#dependency-graph">DAG</a> ·
+          <a href="#parallel">병렬 작업</a> · <a href="#verification">검증</a> ·
+          <a href="#consensus">구현 합의</a> · <a href="#dag-review">DAG 합의</a>
+        </p>
+      </header>
+      <div class="notice">
+        <p>
+          품질 재검토 후 공개 글은 10개입니다. 최신 검사와 로컬 백업·복구는 통과했으며, 전체 자료
+          가공·외부 연결·실제 메일·Google 인증·운영 재시작 확인은 남아 있습니다.
+        </p>
+      </div>
+      <section id="status" class="prose">
+        <h2>현재 진행 상태</h2>
+        <p>
+          기존 계정으로 자료 처리를 다시 실행할 수 있게 했습니다. 구독 사용률만으로 호출을 차단하던
+          코드를 수정했고, 같은 계정의 실제 호출이 정상 완료됐습니다. 사용자가 크레딧 사용을 명시한
+          설정에서도 배치 자체의 사용량 상한과 공급자의 실제 응답을 적용합니다. 앞선 계정 변경
+          요청은 필요하지 않았습니다.
+        </p>
+        <p>
+          공개 자료 30개 가운데 18개를 보류했습니다. 대상이나 문제를 알 수 없는 글, 근거가 부족한
+          글, 쓸 정보보다 대화 경과를 나열한 글을 제외했습니다. 나머지 12개는 개념·조건·방법을 직접
+          설명하는 자료로 다시 작성했습니다. 독립 검토에서 원자료에 없는 설명이 발견된 한 글은 해당
+          설명을 제거한 뒤 새 검토를 통과했습니다. 실제 게시 검수에서는 10개가 갱신됐고 2개는
+          보류됐습니다. 현재 공개 글은 10개입니다. 원자료·기존 버전·처리 기록은 비공개로 보존합니다.
+        </p>
+        <p>
+          새 품질 기준은 이전 승인과 구분하며 같은 최종본에 대한 통과가 필요합니다. 보류 글은 새
+          버전의 검토·승인·최종 검수를 거쳐 복구할 수 있습니다. 오래된 배치 출력 형식이 새 품질
+          항목을 빠뜨리는 문제도 발견해, 새 작업이 현재 형식을 쓰도록 수정했습니다. 빠진 항목을
+          코드로 통과 처리하지 않았습니다.
+        </p>
+        <p>
+          전체 서버 테스트 555개와 타입 검사·빌드가 통과했습니다. 갱신된 첫 화면·자료 길잡이·글
+          화면을 세 가지 폭에서 확인했고 가로 넘침·콘솔 오류·비공개 근거 노출이 없었습니다. 보류된
+          20개 글의 직접 주소는 비회원에게 모두 차단됐습니다. 전체 자료 처리와 외부 배포는
+          미완료입니다. Cloudflare 권한 문제, 실제 메일 수신과 Google 로그인 완료가 남아 있습니다.
+        </p>
+        <p>
+          실제 DB의 격리된 복사본으로 백업·복구도 확인했습니다. 복사본의 변경을 되돌린 뒤 전체
+          내용과 구조가 기준 시점의 원본과 일치했고, 아직 DB 본체 파일에 반영되지 않은 기록도 백업에
+          포함됐습니다. 원본 DB를 수정하거나 앱을 중지하지 않았습니다. 외부 운영 서버의 재시작·원격
+          복구는 별도로 확인해야 합니다.
+        </p>
+        <p>
+          ReTalk의 허용된 PC 카톡 대화방에 읽기 전용으로 연결했습니다. 검색한 2017년 예외·디버거
+          기록은 나오지 않았고, 최근 예외 관련 대화는 다른 분석 맥락이었습니다. 다른 시기의 대화를
+          해당 사례의 근거로 합치지 않았습니다.
+        </p>
+        <p>
+          질문·공유·자유는 첫 구현의 작성 목적 필터입니다. 별도 게시판을 늘리지 않고 최신 글과 자료
+          길잡이가 같은 글을 사용하는 기존 합의를 유지합니다. 영구적인 분류 체계로 확정하지
+          않았습니다.
+        </p>
+        <details id="progress-history">
+          <summary>초기 진행 기록과 보고 세션</summary>
+          <p>
+            발신 세션 이름: 자료 가공·운영 통합 세션. 루트 보고의 머리말은
+            <code>[리버싱포럼 / 자료 가공·운영 통합 세션 → ROOT]</code>를 사용합니다.
+          </p>
+          <p>
+            보고 대상은 Codex 루트 세션 <code>01a0fd15-7ee5-7412-a281-2d4d4ac37f77</code>입니다. 큰
+            실제 진전과 중요한 차이만 <code>codex queue --thread</code>로 전달합니다. 머리말·번호를
+            붙인 짧은 결과·남은 과제·근거 경로를 한 메시지로 묶고, 전체 전송 본문을 한 문자열·한
+            줄로 전달합니다. 메시지의 큐 등록과 상대 세션의 열람은 구분합니다.
+          </p>
+          <h4>2026-10-03 초기 진행 기록</h4>
+          <p>
+            이 절의 검사 수와 공개 글 수는 품질 재검토 전의 기록입니다. 현재 결과는 다음 절에
+            적습니다.
+          </p>
+          <p>
+            Sol/max·Astra/max의 상호 검토 합의에 따라 공통 글 목록·자료 길잡이, 공개 글 전체를
+            대상으로 한 의미 중복 확인, 스팸 제한과 게시 직전 동시성 확인을 구현했습니다.
+            불확실·오류·예산 초과는 비공개를 유지하며, 확인된 공개 연관 글만 표시합니다.
+            <a href="#consensus">합의 기록</a>
+          </p>
+          <p>
+            이메일 인증·재전송·복구와 Google 가입·사이트 닉네임 설정·명시적인 다른 이메일
+            연결·해제·비밀번호 설정을 구현했습니다. 로그인과 가입 화면의 중복 동선을 정리하고 작은
+            화면의 계정 메뉴를 개선했습니다. 공급자 페이지로의 실제 Google 이동은 확인했지만 실제
+            Google 인증 완료와 Resend 메일 수신은 아직 확인하지 않았습니다.
+          </p>
+          <p>
+            전체 원본 범위 대응은 끝났으며 후보 추출·편집·독립 검토·실제 게시를 계속 실행합니다.
+            원본 범위 대응이나 출력 가져오기 수를 전체 의미 검토 완료로 표현하지 않습니다. 잘못된
+            범위·분류가 충돌한 출력은 비공개로 보존하며 새 모델 결과로 복구합니다. 확정 보류 판정을
+            같은 글의 재게시로 초기화하지 않고, 승인된 같은 최종본의 재시도는 기존 승인·시도 횟수를
+            유지하도록 수정했습니다.
+          </p>
+          <p>
+            타입 검사·빌드와 서버 테스트 473개가 통과했습니다. 모델·빌드의 병렬 실행과 테스트가
+            자원을 함께 사용해 일부 실행 시간 제한을 초과했으며, 서버 검증의 동시 작업을 두 개로
+            제한해 전체 통과를 확인했습니다. 대량 파싱의 성능 기준은 유지했습니다. 헤드리스 화면
+            검수 66개에서 가로 넘침·콘솔 오류가 없었고, 자료 길잡이의 탐색·복귀·댓글·비공개 접근
+            검증도 통과했습니다. 전체 브라우저 시나리오 15개도 한 실행에서 모두 통과했습니다.
+            <a href="#verification">검증 범위</a>
+          </p>
+          <p>
+            실제 서버의 현재 공개 글은 23개입니다. 같은 승인본의 재게시를 실제 검수·공개 경로로
+            확인했습니다. 응답을 끝내지 않는 추출 호출 네 개를 확인해 해당 프로세스만 종료하고,
+            완료한 기록과 비용 예약은 보존한 채 재개했습니다. 새 호출은 후보 추출 10분·편집
+            15분·독립 검토 20분의 최대 실행 시간을 적용합니다. 미확인 비용 예약을 삭제해 예산을
+            늘리지 않습니다.
+          </p>
+          <p>
+            Cloudflare 전용 터널 생성은 현재 토큰으로 <code>403 / 10000</code>을 반환합니다. 실제
+            배포·DNS 연결은 완료되지 않았습니다. 운영 스크립트는 고정 공개 주소와 별도 내부 포트를
+            지원하도록 준비했습니다. 도메인을 연결한 뒤 인증 콜백·영속 DB·외부 작성·재시작을 실제로
+            확인해야 합니다.
+          </p>
+          <p>
+            원본 대화·처리 근거·작업 DB·메일과 OAuth 비밀값은 비공개 로컬 파일에만 보관하며 커밋하지
+            않습니다. 자료 가공 호출은 기존 실행별 예산 장부로 집계하고 Jev 10달러·Codex 추산 한도를
+            유지합니다.
+          </p>
+        </details>
+      </section>
+      <section aria-labelledby="dag-heading">
+        <h2 id="dag-heading">필요한 산출물에 따라 연결한 DAG</h2>
+        <p>
+          실선은 해당 항목·작은 배치의 입력 인계입니다. B→D와 C→D는 준비된 후보의 대안 경로이므로
+          B와 C 전체가 모두 끝나야 D를 시작한다는 뜻이 아닙니다.
+        </p>
+        <p>
+          점선은 해당 범위의 게시·운영·마감 완료 조건입니다. G의 집계와 L의 준비는 지금 시작할 수
+          있습니다. 기게시본 감사 E는 기존 공개본으로 바로 시작하며, J→K는 운영 Google 완주에만
+          적용됩니다.
+        </p>
+        <p>
+          노드 전체 완료를 일괄 선행으로 삼지 않습니다. 동일 최종본의 승인·검수와 게시 직전 동시성
+          확인은 유지합니다.
+        </p>
+        <div class="legend">
+          <span class="state verified">검증됨</span><span class="state working">진행 중</span
+          ><span class="state ready">병렬 착수 가능</span
+          ><span class="state blocked">외부 조건 차단</span
+          ><span class="state unverified">실제 확인 필요</span
+          ><span class="state waiting">선행 조건 대기</span>
+        </div>
+        <div
+          class="graph-scroll"
+          tabindex="0"
+          aria-label="작업 의존성 그래프를 가로로 이동해서 읽기"
+        >
+          <svg
+            id="dependency-graph"
+            viewBox="0 0 1760 965"
+            role="img"
+            aria-labelledby="graph-title graph-desc"
+          >
+            <title id="graph-title">Reversing All 작업 의존성과 진행 상태</title>
+            <desc id="graph-desc">
+              자료 범위 대응에서 후보 추출·필요한 문맥 복구·항목 편집·독립 검토·글별 게시가
+              이어집니다. 전체 자료 정산과 최초 외부 운영은 별도 완료 지점입니다. 로컬 복구와 메일
+              준비는 터널 차단과 분리됩니다.
+            </desc>
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8" fill="#738394"></path>
+              </marker>
+            </defs>
+            <path
+              class="edge item"
+              data-from="A"
+              data-to="B"
+              d="M 264 227 C 287 227, 287 122, 305 122"
+              marker-end="url(#arrow)"
+            >
+              <title>해당 범위의 위치 대응과 최소화 입력 기반이 필요합니다.</title>
+            </path>
+            <path
+              class="edge item"
+              data-from="B"
+              data-to="C"
+              d="M 432 174 L 432 302"
+              marker-end="url(#arrow)"
+            >
+              <title>
+                미해결 대상과 근거 범위가 필요합니다. 기존 표적은 이미 준비되어 있을 수 있습니다.
+              </title>
+            </path>
+            <text class="edge-label" x="446" y="246">미해결만</text>
+            <path
+              class="edge item"
+              data-from="B"
+              data-to="D"
+              d="M 554 122 C 579.5 122, 579.5 227, 600 227"
+              marker-end="url(#arrow)"
+            >
+              <title>유효 후보가 준비되면 해당 항목의 편집을 시작할 수 있습니다.</title>
+            </path>
+            <path
+              class="edge item"
+              data-from="C"
+              data-to="D"
+              d="M 554 362 C 579.5 362, 579.5 227, 600 227"
+              marker-end="url(#arrow)"
+            >
+              <title>문맥이 부족했던 항목은 검증된 복구 결과가 필요합니다.</title>
+            </path>
+            <path
+              class="edge item"
+              data-from="D"
+              data-to="E"
+              d="M 849 227 C 874.5 227, 874.5 227, 895 227"
+              marker-end="url(#arrow)"
+            >
+              <title>
+                새 초안 검토에는 해당 본문·근거가 필요합니다. 기게시본 감사는 이 간선에 묶이지
+                않습니다.
+              </title>
+            </path>
+            <path
+              class="edge gate conditional"
+              data-from="E"
+              data-to="F"
+              d="M 1144 227 C 1169.5 227, 1169.5 227, 1190 227"
+              marker-end="url(#arrow)"
+            >
+              <title>독립 검토 통과와 확인된 중단 해제 조건이 공개에 필요합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="A"
+              data-to="G"
+              d="M 142 175 L 142 34 L 1510 34 L 1510 166"
+              marker-end="url(#arrow)"
+            >
+              <title>후보 수와 별도로 전체 원본의 분모를 대조해야 합니다.</title>
+            </path>
+            <text class="edge-label" x="720" y="25">전체 분모</text>
+            <path
+              class="edge completion conditional"
+              data-from="B"
+              data-to="G"
+              d="M 432 70 L 432 48 L 1535 48 L 1535 166"
+              marker-end="url(#arrow)"
+            >
+              <title>편집으로 넘어가지 않은 범위도 정산해야 합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="C"
+              data-to="G"
+              d="M 554 362 L 1450 362 L 1450 245 L 1482 245"
+              marker-end="url(#arrow)"
+            >
+              <title>모든 복구 대상의 결과와 남은 범위를 정산해야 합니다.</title>
+            </path>
+            <text class="edge-label" x="820" y="350">복구 잔량</text>
+            <path
+              class="edge completion conditional"
+              data-from="E"
+              data-to="G"
+              d="M 1022 175 L 1022 72 L 1560 72 L 1560 166"
+              marker-end="url(#arrow)"
+            >
+              <title>게시하지 않는 판정도 마감 집계에 포함해야 합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="D"
+              data-to="G"
+              d="M 727 175 L 727 90 L 1585 90 L 1585 166"
+              marker-end="url(#arrow)"
+            >
+              <title>
+                편집 단계에서 보류·제외되어 검토로 넘어가지 않은 항목도 전체 마감에서 직접 정산해야
+                합니다.
+              </title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="F"
+              data-to="G"
+              d="M 1439 227 C 1464.5 227, 1464.5 227, 1485 227"
+              marker-end="url(#arrow)"
+            >
+              <title>게시 또는 최종 보류 결과를 실제 상태와 대조해야 합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="J"
+              data-to="K"
+              d="M 1144 877 C 1169.5 877, 1169.5 877, 1190 877"
+              marker-end="url(#arrow)"
+            >
+              <title>
+                운영 Google 콜백을 끝내려면 운영 주소가 필요합니다. 메일 수신·설정 준비의 착수
+                조건은 아닙니다.
+              </title>
+            </path>
+            <text class="edge-label" x="1160" y="811">운영 Google만</text>
+            <path
+              class="edge gate conditional"
+              data-from="H"
+              data-to="F"
+              d="M 1022 490 L 1022 430 L 1257 430 L 1257 287"
+              marker-end="url(#arrow)"
+            >
+              <title>
+                강화한 품질 게이트 등 게시에 영향을 주는 변경분의 검증이 게시 완료에 필요합니다. H
+                전체나 전체 기게시 감사의 완료를 일괄 요구하지 않으며 재개 허용 범위를 확인해야
+                합니다.
+              </title>
+            </path>
+            <text class="edge-label" x="1065" y="412">게시 영향분만</text>
+            <path
+              class="edge completion conditional"
+              data-from="H"
+              data-to="L"
+              d="M 1144 542 C 1317 542, 1317 687, 1485 687"
+              marker-end="url(#arrow)"
+            >
+              <title>운영에 사용하는 코드·설정의 검증 결과가 필요합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="I"
+              data-to="L"
+              d="M 1144 687 C 1317 687, 1317 687, 1485 687"
+              marker-end="url(#arrow)"
+            >
+              <title>실제 운영 저장과 복구 확인이 필요합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="J"
+              data-to="L"
+              d="M 1022 825 L 1022 782 L 1450 782 L 1450 730 L 1482 730"
+              marker-end="url(#arrow)"
+            >
+              <title>운영 인수에는 실제 외부 연결 결과가 필요합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="K"
+              data-to="L"
+              d="M 1439 877 C 1464.5 877, 1464.5 687, 1485 687"
+              marker-end="url(#arrow)"
+            >
+              <title>실제 공급자의 인증 완료 증거가 필요합니다.</title>
+            </path>
+            <path
+              class="edge completion conditional"
+              data-from="E"
+              data-to="L"
+              d="M 1022 279 L 1022 454 L 1460 454 L 1460 653 L 1482 653"
+              marker-end="url(#arrow)"
+            >
+              <title>전체 자료 신규 편집과 별개로 현재 공개 유지본의 품질 판정이 필요합니다.</title>
+            </path>
+            <text class="edge-label" x="1235" y="476">공개 유지본</text>
+            <path
+              class="edge completion conditional"
+              data-from="F"
+              data-to="L"
+              d="M 1317 279 L 1317 414 L 1475 414 L 1475 672 L 1482 672"
+              marker-end="url(#arrow)"
+            >
+              <title>
+                릴리스에 포함한 새·수정 공개본은 글별 공개 조건을 통과해야 합니다. 전체 신규 게시
+                완료를 요구하지 않습니다.
+              </title>
+            </path>
+            <text class="edge-label" x="1325" y="398">새·수정본 포함 시</text>
+            <a href="#task-A" aria-label="원본 범위·중복 대응 검증됨">
+              <g class="node verified" data-node="A">
+                <title>
+                  원본 위치와 중복·보류 범위의 대응 완료 기록이 있습니다. 의미 검토와 공개 적격
+                  판정의 완료는 아닙니다.
+                </title>
+                <rect x="20" y="175" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="38" y="197">A · 검증됨</text>
+                <text class="node-label"><tspan x="38" y="227">원본 범위·중복 대응</tspan></text>
+              </g>
+            </a>
+            <a href="#task-B" aria-label="작은 배치 준비·후보 추출 진행 중">
+              <g class="node working" data-node="B">
+                <title>
+                  01:57:38 KST의 실행 명령과 후보 샤드 위임 기록이 있습니다. 현재 생존·정상 종료를
+                  확정하지 않습니다.
+                </title>
+                <rect x="310" y="70" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="328" y="92">B · 진행 중</text>
+                <text class="node-label">
+                  <tspan x="328" y="122">작은 배치 준비·</tspan>
+                  <tspan x="328" y="148">후보 추출</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-C" aria-label="문맥·분류 충돌 복구 진행 중">
+              <g class="node working" data-node="C">
+                <title>
+                  01:49:00 KST의 문맥 복구 실행 명령이 있습니다. 필요한 대상만 복구하며 새 게시
+                  중단과 구분합니다.
+                </title>
+                <rect x="310" y="310" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="328" y="332">C · 진행 중</text>
+                <text class="node-label">
+                  <tspan x="328" y="362">문맥·분류 충돌</tspan>
+                  <tspan x="328" y="388">복구</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-D" aria-label="항목 편집·근거 확인 진행 중">
+              <g class="node working" data-node="D">
+                <title>
+                  01:44:43 KST의 편집 실행 명령이 있습니다. 대상·질문응답·누락 자료를 추측하지 않는
+                  강화 기준을 적용합니다.
+                </title>
+                <rect x="605" y="175" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="623" y="197">D · 진행 중</text>
+                <text class="node-label">
+                  <tspan x="623" y="227">항목 편집·</tspan>
+                  <tspan x="623" y="253">근거 확인</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-E" aria-label="독립 검토·기게시본 품질 감사 진행 중">
+              <g class="node working" data-node="E">
+                <title>
+                  이전 공개 글 30개를 품질 재검토해 18개를 보류했습니다. 나머지 12개를 재작성·독립
+                  검토했고 실제 게시 검수에서 10개 갱신, 2개 추가 보류를 기록했습니다. 전체 자료
+                  검토는 계속됩니다.
+                </title>
+                <rect x="900" y="175" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="918" y="197">E · 진행 중</text>
+                <text class="node-label">
+                  <tspan x="918" y="227">독립 검토·</tspan>
+                  <tspan x="918" y="253">기게시본 품질 감사</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-F" aria-label="글별 승인·최종검수·게시 실제 확인 필요">
+              <g class="node working" data-node="F">
+                <title>
+                  새 품질 기준과 같은 최종본으로 실제 게시 검수를 진행했습니다. 현재 공개 글은
+                  10개이며 다른 대상의 재개·공개 조건은 해당 최종본마다 확인합니다.
+                </title>
+                <rect x="1195" y="175" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="1213" y="197">F · 진행 중</text>
+                <text class="node-label">
+                  <tspan x="1213" y="227">승인·최종검수·게시</tspan>
+                  <tspan x="1213" y="253">갱신 10 · 보류 2</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-G" aria-label="전체 자료 처리 마감 선행 조건 대기">
+              <g class="node waiting" data-node="G">
+                <title>
+                  중간 집계는 계속 갱신할 수 있지만 전체 마감은 미완료입니다. 준비·일부 게시를 전체
+                  자료 완료로 표현하지 않으며 최초 외부 운영과 별도 완료 지점입니다.
+                </title>
+                <rect x="1490" y="175" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="1508" y="197">G · 선행 조건 대기</text>
+                <text class="node-label">
+                  <tspan x="1508" y="227">전체 자료 처리</tspan>
+                  <tspan x="1508" y="253">마감</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-H" aria-label="실행 경로 보완·최신 변경 검증 진행 중">
+              <g class="node verified" data-node="H">
+                <title>
+                  최신 통합 보고에서 타입 검사·서버 테스트 555개·운영 빌드 통과와 갱신 화면 검수를
+                  확인했습니다. 실제 호출 복구도 기록됐습니다. 이후 변경은 새 스냅샷으로 검증합니다.
+                </title>
+                <rect x="900" y="490" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="918" y="512">H · 검증됨</text>
+                <text class="node-label">
+                  <tspan x="918" y="542">실행 경로 보완·</tspan>
+                  <tspan x="918" y="568">최신 변경 검증</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-I" aria-label="로컬 운영·백업 복구 병렬 착수 가능">
+              <g class="node working" data-node="I">
+                <title>
+                  실제 DB의 격리 사본에서 백업·변경·복원을 확인했습니다. 26개 표의 내용·구조, WAL
+                  포함과 무결성·관계 검사가 통과했습니다. 운영 서버의 영속 저장·재시작·원격 복구
+                  확인은 남아 있습니다.
+                </title>
+                <rect x="900" y="635" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="918" y="657">I · 진행 중</text>
+                <text class="node-label">
+                  <tspan x="918" y="687">로컬 운영·</tspan>
+                  <tspan x="918" y="713">백업 복구</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-J" aria-label="전용 터널·외부 연결 외부 조건 차단">
+              <g class="node blocked" data-node="J">
+                <title>
+                  전용 터널 생성의 403/10000 오류가 기록되어 있습니다. 외부 배포·DNS 연결의 완료
+                  증거는 없습니다.
+                </title>
+                <rect x="900" y="825" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="918" y="847">J · 외부 조건 차단</text>
+                <text class="node-label">
+                  <tspan x="918" y="877">전용 터널·</tspan>
+                  <tspan x="918" y="903">외부 연결</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-K" aria-label="실제 메일·Google 인증 완주 실제 확인 필요">
+              <g class="node unverified" data-node="K">
+                <title>
+                  메일 수신과 Google 인증 완료의 성공 증거가 없습니다. 공급자 화면으로 이동한 것과
+                  인증 성공을 구분합니다.
+                </title>
+                <rect x="1195" y="825" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="1213" y="847">K · 실제 확인 필요</text>
+                <text class="node-label">
+                  <tspan x="1213" y="877">실제 메일·</tspan>
+                  <tspan x="1213" y="903">Google 인증 완주</tspan>
+                </text>
+              </g>
+            </a>
+            <a href="#task-L" aria-label="최초 외부 운영 확인 외부 조건 차단">
+              <g class="node blocked" data-node="L">
+                <title>
+                  외부 연결과 실제 인증·영속 저장 등의 인수 확인이 남았습니다. 전체 자료 마감 G는
+                  최초 릴리스의 일괄 선행이 아닙니다.
+                </title>
+                <rect x="1490" y="635" width="244" height="104" rx="10"></rect>
+                <text class="node-id" x="1508" y="657">L · 외부 조건 차단</text>
+                <text class="node-label">
+                  <tspan x="1508" y="687">최초 외부 운영</tspan>
+                  <tspan x="1508" y="713">확인</tspan>
+                </text>
+              </g>
+            </a>
+          </svg>
+        </div>
+        <p class="graph-hint">
+          작업을 누르면 아래의 완료 기준과 근거로 이동합니다. 작은 화면에서는 그래프 안을 가로로
+          이동해 읽을 수 있습니다.
+        </p>
+        <details>
+          <summary>간선마다 필요한 선행 산출물</summary>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>연결</th>
+                  <th>적용 범위</th>
+                  <th>필요한 이유</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>A → B</td>
+                  <td>해당 원본 범위</td>
+                  <td>해당 범위의 위치 대응과 최소화 입력 기반이 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>B → C</td>
+                  <td>복구가 필요한 항목만</td>
+                  <td>
+                    미해결 대상과 근거 범위가 필요합니다. 기존 표적은 이미 준비되어 있을 수
+                    있습니다.
+                  </td>
+                </tr>
+                <tr>
+                  <td>B → D</td>
+                  <td>문맥이 충분한 후보</td>
+                  <td>유효 후보가 준비되면 해당 항목의 편집을 시작할 수 있습니다.</td>
+                </tr>
+                <tr>
+                  <td>C → D</td>
+                  <td>복구된 후보</td>
+                  <td>문맥이 부족했던 항목은 검증된 복구 결과가 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>D → E</td>
+                  <td>새 초안의 검토 분기만</td>
+                  <td>
+                    새 초안 검토에는 해당 본문·근거가 필요합니다. 기게시본 감사는 이 간선에 묶이지
+                    않습니다.
+                  </td>
+                </tr>
+                <tr>
+                  <td>E → F</td>
+                  <td>해당 최종본·재개 허용 범위</td>
+                  <td>독립 검토 통과와 확인된 중단 해제 조건이 공개에 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>A → G</td>
+                  <td>전체 원본 분모 정산</td>
+                  <td>후보 수와 별도로 전체 원본의 분모를 대조해야 합니다.</td>
+                </tr>
+                <tr>
+                  <td>B → G</td>
+                  <td>비후보를 포함한 분류 결과</td>
+                  <td>편집으로 넘어가지 않은 범위도 정산해야 합니다.</td>
+                </tr>
+                <tr>
+                  <td>C → G</td>
+                  <td>복구 결과와 미해결 잔량</td>
+                  <td>모든 복구 대상의 결과와 남은 범위를 정산해야 합니다.</td>
+                </tr>
+                <tr>
+                  <td>E → G</td>
+                  <td>검토 보류·기게시본 감사</td>
+                  <td>게시하지 않는 판정도 마감 집계에 포함해야 합니다.</td>
+                </tr>
+                <tr>
+                  <td>D → G</td>
+                  <td>편집 단계 결과와 잔량</td>
+                  <td>
+                    편집 단계에서 보류·제외되어 검토로 넘어가지 않은 항목도 전체 마감에서 직접
+                    정산해야 합니다.
+                  </td>
+                </tr>
+                <tr>
+                  <td>F → G</td>
+                  <td>적격 자료의 실제 게시·최종 보류</td>
+                  <td>게시 또는 최종 보류 결과를 실제 상태와 대조해야 합니다.</td>
+                </tr>
+                <tr>
+                  <td>J → K</td>
+                  <td>운영 Google 인증 완주만</td>
+                  <td>
+                    운영 Google 콜백을 끝내려면 운영 주소가 필요합니다. 메일 수신·설정 준비의 착수
+                    조건은 아닙니다.
+                  </td>
+                </tr>
+                <tr>
+                  <td>H → F</td>
+                  <td>게시 영향 변경분만</td>
+                  <td>
+                    강화한 품질 게이트 등 게시에 영향을 주는 변경분의 검증이 게시 완료에 필요합니다.
+                    H 전체나 전체 기게시 감사의 완료를 일괄 요구하지 않으며 재개 허용 범위를
+                    확인해야 합니다.
+                  </td>
+                </tr>
+                <tr>
+                  <td>H → L</td>
+                  <td>동일 릴리스 스냅샷</td>
+                  <td>운영에 사용하는 코드·설정의 검증 결과가 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>I → L</td>
+                  <td>영속 저장·재시작·복구</td>
+                  <td>실제 운영 저장과 복구 확인이 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>J → L</td>
+                  <td>외부 HTTPS 연결</td>
+                  <td>운영 인수에는 실제 외부 연결 결과가 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>K → L</td>
+                  <td>실제 운영 메일·인증</td>
+                  <td>실제 공급자의 인증 완료 증거가 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>E → L</td>
+                  <td>릴리스에 공개 유지할 기존 글</td>
+                  <td>전체 자료 신규 편집과 별개로 현재 공개 유지본의 품질 판정이 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td>F → L</td>
+                  <td>새·수정 공개본을 포함할 때</td>
+                  <td>
+                    릴리스에 포함한 새·수정 공개본은 글별 공개 조건을 통과해야 합니다. 전체 신규
+                    게시 완료를 요구하지 않습니다.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </section>
+      <section aria-labelledby="audit-heading" id="parallel">
+        <h2 id="audit-heading">병렬로 진행할 수 있는 작업 점검</h2>
+        <p>
+          후보 추출·문맥 복구·편집에는 최근 실행 명령이 있으므로 미착수로 단정할 수 없습니다. 현재
+          생존·정상 종료·최근 산출물은 다음 보고에서 별도로 확인해야 합니다.
+        </p>
+        <p>
+          병렬 가능하지만 수행 여부가 확인되지 않은 작업은 아래와 같습니다. 성공 증거가 없다는
+          사실만으로 미착수를 확정하지 않습니다.
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>작업</th>
+                <th>실제 관측</th>
+                <th>다음 조치</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">후보 추출·문맥 복구·항목 편집</th>
+                <td>
+                  01:57:38·01:49:00·01:44:43 KST의 별도 실행 명령이 있습니다. 현재 동시 실행 여부는
+                  미확인입니다.
+                </td>
+                <td>
+                  준비된 서로 다른 범위를 배정하고 최신 산출물·호출 경로·공유 상태를 확인합니다.
+                  전체 추출 종료를 모든 편집의 선행으로 삼지 않습니다.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">품질 게이트 보완·기게시본 감사</th>
+                <td>
+                  기게시본 30개 품질 감사·재작성과 실제 글별 갱신이 기록됐습니다. 전체 자료의
+                  검토·감사는 계속됩니다.
+                </td>
+                <td>
+                  새로 준비된 해당본의 검토·게시를 이어가고 기게시본 감사는 필요한 기존 글로 독립
+                  진행합니다.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">로컬 영속 저장·백업 복구</th>
+                <td>
+                  격리된 실제 DB 사본의 백업·복구·내용 및 구조 일치가 통과했습니다. 운영 서버
+                  재시작·원격 복구는 미확인입니다.
+                </td>
+                <td>
+                  확인된 로컬 복구를 반복 대기로 두지 않습니다. 준비된 운영 후보의 영속
+                  저장·재시작과 외부 복구를 나누어 맡깁니다.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">실제 메일 수신·인증 설정 준비</th>
+                <td>
+                  실제 수신·Google 인증 완료의 성공 증거가 없습니다. 공급자 화면 이동만 확인된
+                  기록입니다.
+                </td>
+                <td>
+                  메일 수신과 콜백 설정 준비의 수행 여부를 확인합니다. 운영 Google 완주만 공개
+                  주소에 의존합니다.
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">최신 변경 검증·터널 권한 확인</th>
+                <td>
+                  현재 통합 스냅샷의 타입 검사·서버 테스트 555개·빌드와 갱신 화면 검수가
+                  통과했습니다. 터널 생성 권한 오류는 남아 있습니다.
+                </td>
+                <td>
+                  후속 변경은 해당 스냅샷으로 다시 검증하고 외부 연결 준비와 병행합니다. 안정된 검증
+                  단위로 커밋·푸시합니다.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section aria-labelledby="tasks-heading">
+        <h2 id="tasks-heading">작업별 진전과 완료 기준</h2>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>작업</th>
+                <th>진행 상태와 관측</th>
+                <th>착수 조건과 완료 기준</th>
+                <th>담당과 근거</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr id="task-A">
+                <th scope="row">A<br />원본 범위·중복 대응</th>
+                <td>
+                  <span class="state verified">검증됨</span>
+                  <p>
+                    원본 위치와 중복·보류 범위의 대응 완료 기록이 있습니다. 의미 검토와 공개 적격
+                    판정의 완료는 아닙니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 기존 대응표를 사용하는 작업은 준비된 해당 범위부터
+                    시작합니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 전체 원본 범위·중복·보류·미해석 범위의 대응을 확인합니다.
+                  </p>
+                </td>
+                <td>
+                  자료 파이프라인 담당<br /><a href="#status">원본 대응 기록</a> ·
+                  <a href="research/chat-pipeline-20261002/implementation.md">처리 범위 기준</a>
+                </td>
+              </tr>
+              <tr id="task-B">
+                <th scope="row">B<br />작은 배치 준비·후보 추출</th>
+                <td>
+                  <span class="state working">진행 중</span>
+                  <p>
+                    01:57:38 KST의 실행 명령과 후보 샤드 위임 기록이 있습니다. 현재 생존·정상 종료를
+                    확정하지 않습니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 승인된 해당 범위의 최소화 입력과 실제 호출 가능성·예산을
+                    확인합니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 각 범위의 유효 후보·비후보·미해결을 검증된 결과로
+                    분류하고 잔량을 기록합니다.
+                  </p>
+                </td>
+                <td>
+                  후보 추출 담당 · 메인<br /><a href="../scripts/chat-corpus-run.ts">후보 실행</a> ·
+                  <a href="../scripts/chat-candidate-shards.ts">작은 배치 실행</a>
+                </td>
+              </tr>
+              <tr id="task-C">
+                <th scope="row">C<br />문맥·분류 충돌 복구</th>
+                <td>
+                  <span class="state working">진행 중</span>
+                  <p>
+                    01:49:00 KST의 문맥 복구 실행 명령이 있습니다. 필요한 대상만 복구하며 새 게시
+                    중단과 구분합니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 이미 식별된 미해결 대상과 근거 범위가 있으면 시작합니다.
+                    다른 범위의 B 전체 완료를 기다리지 않습니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 대상별 새 모델 결과의 범위·충돌을 검증하고 잔여 상태를
+                    보존합니다.
+                  </p>
+                </td>
+                <td>
+                  문맥 복구 담당 · 메인<br /><a href="../scripts/chat-context-run.ts">복구 실행</a>
+                  · <a href="../src/server/chat-pipeline/job-store.ts">복구 상태 보존</a>
+                </td>
+              </tr>
+              <tr id="task-D">
+                <th scope="row">D<br />항목 편집·근거 확인</th>
+                <td>
+                  <span class="state working">진행 중</span>
+                  <p>
+                    01:44:43 KST의 편집 실행 명령이 있습니다. 대상·질문응답·누락 자료를 추측하지
+                    않는 강화 기준을 적용합니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> B의 문맥 충분 후보 또는 C의 복구된 후보 중 준비된 해당
+                    항목으로 시작합니다. B와 C 전체가 모두 끝날 필요는 없습니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 원문 없이도 대상·문제·논점과 한계를 이해할 수 있는 최종
+                    본문과 근거를 준비합니다.
+                  </p>
+                </td>
+                <td>
+                  편집 담당 · 메인<br /><a href="../scripts/chat-editorial-batches.ts"
+                    >편집과 검토 준비</a
+                  >
+                  ·
+                  <a href="../src/server/chat-pipeline/schemas/draft.schema.json">편집 출력 계약</a>
+                </td>
+              </tr>
+              <tr id="task-E">
+                <th scope="row">E<br />독립 검토·기게시본 품질 감사</th>
+                <td>
+                  <span class="state working">진행 중</span>
+                  <p>
+                    이전 공개 글 30개를 품질 재검토해 18개를 보류했습니다. 나머지 12개를 재작성·독립
+                    검토했고 실제 게시 검수에서 10개 갱신, 2개 추가 보류를 기록했습니다. 전체 자료
+                    검토는 계속됩니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 기게시본 감사는 기존 공개본으로 즉시 시작합니다. 새 초안
+                    검토만 D의 해당 본문·근거를 기다립니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 버전별 근거·권리·개인정보·품질을 독립 판정하고 기게시본의
+                    유지·보류·수정을 결정합니다.
+                  </p>
+                </td>
+                <td>
+                  품질 검토 담당 · 메인 통합<br /><a
+                    href="../tests/server/chat-editorial-quality.test.ts"
+                    >품질 정책 검증</a
+                  >
+                  · <a href="../scripts/chat-editorial-batches.ts">독립 검토 계약</a>
+                </td>
+              </tr>
+              <tr id="task-F">
+                <th scope="row">F<br />글별 승인·최종검수·게시</th>
+                <td>
+                  <span class="state working">진행 중</span>
+                  <p>
+                    새 품질 기준과 같은 최종본으로 실제 게시 검수를 진행했습니다. 현재 공개 글은
+                    10개이며 다른 대상의 재개·공개 조건은 해당 최종본마다 확인합니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 준비된 해당 최종본의 독립 검토·실제 편집자 승인·실제 최종
+                    검수 조건을 충족하면 글별로 진행합니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 같은 최종본의 Jev·중복·게시 직전 공개 비교 자료 확인과
+                    실제 게시 영수증을 확보합니다.
+                  </p>
+                </td>
+                <td>
+                  실제 편집 세션 · 게시 담당<br /><a href="../scripts/publish-editorial.ts"
+                    >글별 게시 경로</a
+                  >
+                  · <a href="../src/server/editorial.ts">서버의 승인과 공개 조건</a>
+                </td>
+              </tr>
+              <tr id="task-G">
+                <th scope="row">G<br />전체 자료 처리 마감</th>
+                <td>
+                  <span class="state waiting">선행 조건 대기</span>
+                  <p>
+                    중간 집계는 계속 갱신할 수 있지만 전체 마감은 미완료입니다. 준비·일부 게시를
+                    전체 자료 완료로 표현하지 않으며 최초 외부 운영과 별도 완료 지점입니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 집계는 지금부터 갱신할 수 있습니다. 마감만 전체 범위와
+                    최종 상태 대조를 기다립니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 전체 분모를 대조하고 적격 자료의 게시·확정 보류·제외를
+                    정산합니다. 미검토·오류·예산 중단은 남은 작업으로 표시합니다.
+                  </p>
+                </td>
+                <td>
+                  메인 · 전체 자료 집계<br /><a
+                    href="research/chat-pipeline-20261002/implementation.md"
+                    >범위와 의미 검토 구분</a
+                  >
+                  · <a href="../TODO.md">전체 자료 남은 범위</a>
+                </td>
+              </tr>
+              <tr id="task-H">
+                <th scope="row">H<br />실행 경로 보완·최신 변경 검증</th>
+                <td>
+                  <span class="state verified">검증됨</span>
+                  <p>
+                    최신 통합 보고에서 타입 검사·서버 테스트 555개·운영 빌드 통과와 갱신 화면 검수를
+                    확인했습니다. 실제 호출 복구도 기록됐습니다. 이후 변경은 새 스냅샷으로
+                    검증합니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 각 담당 변경의 안정된 스냅샷부터 관련 검증을 진행합니다.
+                    자료 전체 가공 완료를 기다리지 않습니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 실제 사용 경로와 동일 릴리스 스냅샷의 타입 검사·관련
+                    테스트·빌드·헤드리스 검증을 확인합니다.
+                  </p>
+                </td>
+                <td>
+                  호출 경로 담당 · 메인 통합<br /><a href="#verification">이전 검증 범위</a> ·
+                  <a href="../scripts/chat-codex-run.ts">변경 중인 실행 경로</a>
+                </td>
+              </tr>
+              <tr id="task-I">
+                <th scope="row">I<br />로컬 운영·백업 복구</th>
+                <td>
+                  <span class="state working">진행 중</span>
+                  <p>
+                    실제 DB의 격리 사본에서 백업·변경·복원을 확인했습니다. 26개 표의 내용·구조, WAL
+                    포함과 무결성·관계 검사가 통과했습니다. 운영 서버의 영속 저장·재시작·원격 복구
+                    확인은 남아 있습니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 준비된 운영 빌드·환경과 격리된 DB 복사본을 사용합니다.
+                    터널이나 전자료 완료를 기다리지 않습니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> WAL을 포함한 영속 저장, 재시작, 실제 백업·복구로 같은
+                    데이터가 유지됨을 확인합니다.
+                  </p>
+                </td>
+                <td>
+                  메인 · 운영 확인 담당<br /><a href="../scripts/prepare-production.mjs"
+                    >SQLite 운영 복사 준비</a
+                  >
+                  · <a href="../scripts/production-supervisor.mjs">운영 프로세스 준비</a>
+                </td>
+              </tr>
+              <tr id="task-J">
+                <th scope="row">J<br />전용 터널·외부 연결</th>
+                <td>
+                  <span class="state blocked">외부 조건 차단</span>
+                  <p>
+                    전용 터널 생성의 403/10000 오류가 기록되어 있습니다. 외부 배포·DNS 연결의 완료
+                    증거는 없습니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 원인·권한 확인과 설정 준비는 다른 작업과 별도로
+                    진행합니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 전용 터널·DNS·HTTPS가 의도한 운영 서버에 연결됨을 실제로
+                    확인합니다.
+                  </p>
+                </td>
+                <td>
+                  메인 · 터널 권한 확인 담당<br /><a href="#status">외부 연결 차단 기록</a> ·
+                  <a href="#verification">남은 실제 운영 확인</a>
+                </td>
+              </tr>
+              <tr id="task-K">
+                <th scope="row">K<br />실제 메일·Google 인증 완주</th>
+                <td>
+                  <span class="state unverified">실제 확인 필요</span>
+                  <p>
+                    메일 수신과 Google 인증 완료의 성공 증거가 없습니다. 공급자 화면으로 이동한 것과
+                    인증 성공을 구분합니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 메일 수신·설정·콜백 등록 준비는 지금 가능한 범위를
+                    확인합니다. 운영 Google 완주만 J의 운영 주소를 기다립니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 실제 Resend 수신과 운영 콜백을 통한 Google 인증 세션
+                    생성을 확인합니다.
+                  </p>
+                </td>
+                <td>
+                  수행 담당 미확인 · 인증 공급자 확인 담당 배정 권고<br /><a href="#verification"
+                    >공급자 실제 확인 범위</a
+                  >
+                  · <a href="../TODO.md">운영 인증 남은 작업</a>
+                </td>
+              </tr>
+              <tr id="task-L">
+                <th scope="row">L<br />최초 외부 운영 확인</th>
+                <td>
+                  <span class="state blocked">외부 조건 차단</span>
+                  <p>
+                    외부 연결과 실제 인증·영속 저장 등의 인수 확인이 남았습니다. 전체 자료 마감 G는
+                    최초 릴리스의 일괄 선행이 아닙니다.
+                  </p>
+                </td>
+                <td>
+                  <p>
+                    <strong>착수:</strong> 안정된 운영 후보로 준비하고 가능한 로컬 검증부터
+                    진행합니다. 외부 단계는 J의 연결을 사용합니다.
+                  </p>
+                  <p>
+                    <strong>완료:</strong> 같은 릴리스에서 외부 실제 세션·작성/댓글·비공개
+                    보호·인증·영속/복구·공개 유지본의 품질을 확인합니다.
+                  </p>
+                </td>
+                <td>
+                  메인 · 운영 인수 검증 담당<br /><a href="#consensus">첫 외부 운영 계약</a> ·
+                  <a href="#verification">남은 외부 운영 확인</a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section aria-labelledby="resources-heading">
+        <h2 id="resources-heading">의존성과 구분한 실행 제약</h2>
+        <p>
+          단일 all 실행은 후보 풀을 기다린 뒤 편집·검토·게시로 넘어가는 구현상 장벽이 있습니다.
+          단계별 실행은 있으나 중첩하기 전에 공유 manifest·진행 파일·예산 장부·SQLite를 안전하게
+          조정해야 합니다. 이 조정은 실행 조건이며 모든 원본 완료를 뜻하는 간선은 아닙니다.
+        </p>
+        <p>
+          CPU·모델/도구 슬롯·같은 파일·공유 장부와 DB의 경합은 자원 제약으로 기록합니다. 현재 차단
+          사유, 담당자, 재개 조건과 실제 호출 결과를 함께 남기며 계정 화면 표시만으로 실행 가능성을
+          확정하지 않습니다.
+        </p>
+      </section>
+      <section aria-labelledby="rules-heading" id="workflow" class="prose">
+        <h2>앞으로의 병렬 작업과 커밋</h2>
+        <p>
+          준비된 서로 다른 항목의 후보 추출·문맥 복구·편집을 병행합니다. 기존 공개 글의 감사는 새
+          편집을 기다리지 않습니다. 메일·콜백 준비, 운영 재시작·복구 검증, 터널 권한 확인은 해당
+          조건이 준비된 범위부터 독립적으로 맡깁니다.
+        </p>
+        <p>
+          워크트리·브랜치는 같은 파일의 충돌이나 독립된 빌드·검증 환경이 실제로 필요할 때만
+          만듭니다. 담당 파일·산출물과 공유 DB·예산 장부의 조정 범위를 먼저 정합니다.
+        </p>
+        <p>
+          변경은 검증 가능한 한 작업 단위로 원자적으로 커밋하고 푸시합니다. 서로 다른 작업과 다른
+          에이전트의 변경을 한 커밋에 섞지 않으며, 해당 변경의 필수 검증 근거를 남깁니다.
+        </p>
+        <p>
+          진행 상태·DAG·검증·합의 기록은 이 파일에서 갱신합니다. 새 변경의 시각·근거와 착수/완료
+          조건을 함께 적고, 충족된 해당 항목부터 후속 작업을 배정합니다.
+        </p>
+      </section>
+
+      <details id="verification" class="appendix prose">
+        <summary>검증 기록</summary>
+        <h3>임시 운영 구현 검증</h3>
+        <p>
+          확인일은 2026-10-03이며 로컬 구현과 실제 운영 확인을 구분합니다. 전체 자료 가공과 외부
+          배포는 아직 완료되지 않았습니다.
+        </p>
+        <h4>통합 검증</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>확인</th>
+              <th>결과</th>
+              <th>범위</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>npm run typecheck</code></td>
+              <td>통과</td>
+              <td>새 인증·자료·게시 계약과 스크립트를 포함합니다.</td>
+            </tr>
+            <tr>
+              <td><code>npx vitest run --maxWorkers 2</code></td>
+              <td>31개 파일, 555개 테스트 통과</td>
+              <td>
+                기존 흐름과 새 품질 기준·보류·복구·크레딧 허용·현재 배치 형식·분할 추출을
+                확인합니다.
+              </td>
+            </tr>
+            <tr>
+              <td><code>npm run build</code></td>
+              <td>통과</td>
+              <td>
+                Next.js 16.3.8의 운영 빌드입니다. 서버 추적 산출물 30개에서 비공개
+                <code>data/</code>와 <code>.env</code> 참조가 없음을 별도로 확인했습니다.
+              </td>
+            </tr>
+            <tr>
+              <td><code>npm run test:e2e</code></td>
+              <td>15개 시나리오 통과</td>
+              <td>
+                헤드리스로 탐색·스크롤·가입·메일 토큰·쓰기·댓글·로그아웃·복구·비공개 접근을
+                확인합니다.
+              </td>
+            </tr>
+            <tr>
+              <td>자료 길잡이 전용 브라우저 검증</td>
+              <td>통과</td>
+              <td>검색·태그·페이지·같은 조건과 위치로 복귀·댓글·비공개 자료 제외를 확인합니다.</td>
+            </tr>
+            <tr>
+              <td><code>npm run review:ui -- launch</code></td>
+              <td>66개 캡처, 가로 넘침·콘솔 오류 없음</td>
+              <td>빈 목록과 자료가 있는 목록·읽기·쓰기·계정·오류 화면을 확인합니다.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          메일 회귀 검증에는 격리한 테스트 전용 수신함을 사용합니다. 데이터베이스의 인증 값을 직접
+          바꾸지 않습니다. 브라우저 검증의 Jev·중복 응답은 테스트 전용 데이터베이스에서만 사용할 수
+          있으며 운영과 일반 로컬 데이터베이스에서는 무시합니다. 일부 테스트가 의도적으로 만드는
+          본문 hydration 오류와 잘못된 입력은 해당 오류가 계속 감지되는지 확인하기 위한 것입니다.
+        </p>
+        <p>
+          병렬 빌드·모델 호출과 검증이 함께 실행된 일부 시도에서는 프로세스 시작·대량 자료 준비의
+          실행 시간 제한을 넘었습니다. 최종 검증은 서버 테스트의 동시 작업을 두 개로 줄였습니다.
+          프로세스 간 예산 예약과 대형 복구의 개별 시간 제한을 15초로 정했고, 원본 5만 메시지 준비의
+          20초 성능 조건은 유지했습니다.
+        </p>
+        <h4>실제 공급자·자료 실행</h4>
+        <p>
+          로컬 비양자화 임베딩과 실제 Jev·Codex CLI의 중복 판정으로 한국어 재표현·재배열·짜깁기를
+          중복으로, 새 조건·정정·다른 실패 조건·공통 코드에 새 설명을 더한 사례를 허용하는 결과를
+          각각 확인했습니다. 계정 조회 시간이 초과된 한 사례는 별도 재실행에서 통과했습니다. 일곱
+          사례가 모두 통과한 단일 실행 기록으로 표현하지 않습니다. 독립 Sol/medium 재확인도 실제
+          실행에서 확인했습니다. 이 작은 표본이 전체 한국어 리버싱 글의 정확도를 보장하지 않습니다.
+        </p>
+        <p>
+          기존 같은 승인본의 게시 재시도에서는 승인·시도 횟수를 유지하고 실제 최종 Jev·중복·공개
+          비교 자료 확인을 다시 거쳤습니다. 확정된 보류는 같은 본문의 수정·재승인으로 초기화하지
+          않습니다. 누적 게시 영수증 수는 현재 공개 글 수와 다릅니다.
+        </p>
+        <p>
+          새 품질 기준으로 이전 공개 글 30개를 확인해 18개를 보류했습니다. 나머지 12개는 대화 경과
+          요약을 제거하고 재사용할 개념·조건·방법으로 다시 작성했습니다. 독립 검토에서 원자료에 없는
+          설명이 거부된 한 글은 해당 설명을 제거한 후 새 검토를 통과했습니다. 12개 모두 실제 게시
+          검수를 진행해 10개를 갱신했고 2개는 최종 검수에서 보류됐습니다. 현재 공개 글은 10개입니다.
+          원문·기존 버전·보류 기록은 비공개로 보존합니다.
+        </p>
+        <p>
+          같은 기존 계정의 실제 호출이 정상 완료됐습니다. 구독 사용률 100% 표시만으로 크레딧 호출을
+          차단하던 조건을 수정했으며, 사용자의 명시적인 크레딧 사용 설정과 별도 배치 상한을
+          적용합니다. 실제 공급자 오류나 계정 변경은 계속 중단 조건입니다.
+        </p>
+        <p>
+          보류 이후 실제 사이트의 첫 화면·자료 길잡이를 320·390·1440px에서 확인했고, 최초 보류한
+          18개 글의 직접 주소는 비회원에게 모두 404를 반환했습니다. 자료만 있는 초기 목록이 비어
+          보이는 문제도 수정했습니다. 관련 결과는 비공개 <code>data/ui-ux/</code>에 보존합니다.
+        </p>
+        <p>
+          최소화 후보의 실제 추출과 Luna/max 편집·Sol 6.1/xhigh 독립 검토를 계속 실행합니다. 분류가
+          충돌하거나 범위가 잘못된 결과는 비공개로 보존합니다. 같은 근거가 후보와 추가 문맥 대상으로
+          모두 표시되더라도 두 판단이 모두 미해결인 경우에만 중복 표시를 정리합니다. 원래 바이트와
+          정리 기록을 보존하며 미해결 항목을 검토 완료나 공개 후보로 승격하지 않습니다. 그 외 충돌은
+          거부하고, 선택한 재시도 횟수 내에서 실제 새 모델 결과만 사용합니다.
+        </p>
+        <p>
+          Google 공급자 페이지로의 실제 이동에서 올바른 클라이언트·콜백·state·PKCE 구성을
+          확인했습니다. 실제 Google 로그인 완료와 운영 콜백의 등록 상태는 확인하지 않았습니다.
+          Resend의 제한된 발송 키로 도메인 목록 조회는 허용되지 않았으며 실제 메일 수신도 확인하지
+          않았습니다.
+        </p>
+        <h4>로컬 백업·복구 확인</h4>
+        <p>
+          실제 DB를 읽기 전용으로 연결해 격리된 복사본을 만들고 복구했습니다. 26개 표의 행 수·내용
+          해시와 전체 구조가 기준 시점의 원본과 일치했습니다. 복사본에 글 하나를 추가한 뒤 원래
+          백업으로 복원해 추가 전 상태로 돌아왔음을 확인했습니다. 아직 본체 파일에 반영되지 않은
+          기록도 SQLite 백업 기능에는 포함됐습니다. 무결성 검사와 관계 검사도 통과했습니다.
+        </p>
+        <p>
+          원본 DB에는 쓰기·파일 교체·강제 체크포인트를 수행하지 않았고 앱을 중지하지 않았습니다. 이
+          결과는 로컬 복구 검증이며 운영 서버의 재시작·원격 백업·재해 복구 시간 검증은 아닙니다.
+          원자료는 비공개
+          <code>data/deployment/backup-verification/20261002T174914993Z/report.json</code>에
+          있습니다.
+        </p>
+        <h4>남은 실제 운영 확인</h4>
+        <ul>
+          <li>
+            나머지 전체 후보의 가공·검토·게시와 미해결·보류 범위에 대한 최종 집계를 마쳐야 합니다.
+          </li>
+          <li>
+            Cloudflare 터널 생성의 <code>403 / 10000</code> 권한 오류를 해결한 후 DNS·외부
+            HTTPS·실제 세션·영속 저장·재시작을 확인해야 합니다.
+          </li>
+          <li>실제 메일 수신과 Google 인증 완료를 확인해야 합니다.</li>
+          <li>
+            운영 환경의 영속 저장·재시작과 원격 백업 복구를 확인해야 합니다. 로컬 격리 DB의 실제
+            복구 통과와 외부 운영 복구를 구분합니다.
+          </li>
+        </ul>
+      </details>
+      <details id="consensus" class="appendix prose">
+        <summary>구현 합의와 참고 근거</summary>
+        <h3>Reversing All 공개 운영 구현 합의</h3>
+        <p>
+          2026년 10월 2일 사용자가 사이트 구성 개편, 의미 중복과 스팸 방지, 전체 제공 기록의 가공과
+          적격 자료 게시, Cloudflare 임시 하위 도메인 배포를 승인했습니다. Sol 6.1 max와 Astra max가
+          각각 독립 검토한 뒤 상대 검토안과 조정안을 읽고 모두 아래 계약에 합의했습니다. 별도
+          게시판과 작성자 분류 절차를 늘리지 않는 첫 구현입니다.
+        </p>
+        <h4>글을 찾는 두 입구</h4>
+        <p>
+          ‘최신 글’은 현재의 참여를, ‘자료 길잡이’는 다시 읽을 정보를 찾는 입구입니다. 글 주소,
+          작성, 댓글, 검색은 공유합니다. 운영자가 공개 글을 길잡이에 연결하며 작성자는 기존
+          질문·공유·자유 중 목적을 선택합니다. 회원과 편집 자료에 같은 수록 기준을 적용합니다.
+          수록이나 운영 계정 표시는 정확성 인증이 아닙니다.
+        </p>
+        <p>
+          주제·적용 조건·과정·배울 점·한계를 원래 대화 없이 이해할 수 있는 글을 연결합니다. 부분
+          답변, 잘못된 접근, 의견도 성격과 한계를 설명하면 포함할 수 있습니다. 처음에는 실제 공개
+          글로 채울 수 있는 작은 길잡이를 만듭니다. 태그와 과거 기록 기간은 글의 목적 및 웹 게시일과
+          구별합니다.
+        </p>
+        <p>
+          시작 시점의 공개 글 15개는 모두 편집 글입니다. 회원 활동을 만들어 채우지 않습니다. 편집
+          자료가 많아지면 홈에서 짧은 제목 묶음으로 연결하고 실제 회원 글과 댓글 참여를 함께 보여
+          줍니다. 각 글은 공통 검색과 전체 자료 목록에서 계속 찾을 수 있어야 합니다.
+        </p>
+        <h4>새 기여를 기준으로 중복 판정</h4>
+        <p>
+          같은 요청의 재전송과 정확 복제를 먼저 확인하고, 복제 구간과 임베딩으로 공개 글 후보를
+          찾습니다. 문서 및 모든 본문 블록에서 찾은 후보를 합쳐 여러 기존 글의 짜깁기도 비교합니다.
+          블록에는 제목·소제목·환경 문맥과 원래 위치를 연결하며 겹치는 구간을 두 번 계산하지
+          않습니다.
+        </p>
+        <p>
+          차단 대상은 의미 있는 새 정보가 없는 재표현, 재배열, 짜깁기 및 무관한 내용 덧붙임입니다.
+          새 조건, 정정, 새 근거, 다른 해법, 새로운 종합 설명은 보호합니다. 한 구간의 최고 유사도나
+          평균 점수만으로 차단하지 않습니다. 대응하는 기존 내용과 새 기여 판단의 근거가 필요합니다.
+        </p>
+        <p>
+          실제 Jev의 독립 질문으로 조건·근거·정정·기존 답의 충족 여부를 비교하고 애매한 사례에는
+          실제 LLM을 사용합니다. 점수와 confidence를 한국어 리버싱 정확도로 해석하지 않습니다.
+          불확실, 설정 누락, 호출 오류, 예산 초과는 비공개 검토로 처리합니다. 임베딩은 로컬 CPU에서
+          비양자화 모델을 사용하며 LLM은 도구 사용을 차단한 Codex CLI 호출로 연결합니다.
+        </p>
+        <p>
+          공개 후보와 연관 글은 현재 공개된 글만 대상으로 합니다. 다른 회원의 비공개 글
+          존재·제목·내용·유사도를 노출하지 않습니다. 자기 글 수정은 자기 이전 판본을 중복 비교에서
+          제외할 뿐, 변경된 최종본의 공개 전 검수를 생략하지 않습니다.
+        </p>
+        <p>
+          같은 입력의 캐시도 공개 비교 자료가 바뀌면 다시 확인합니다. 동시 요청과 배치 내부의 중복을
+          막기 위해 공개 처리를 조정하고 게시 직전에 비교 자료 변경을 확인합니다. 편집 산출물의
+          안정적인 식별자는 재게시를 막지만 출처가 겹친다는 이유만으로 서로 다른 논점을 차단하지
+          않습니다.
+        </p>
+        <h4>스팸과 공개 조건</h4>
+        <p>
+          기존 글·댓글 작성 간격과 분당 제한을 유지합니다. 같은 요청의 처리 공유, 반복 본문, 서버
+          전체 동시 호출 및 예산 제한은 유료 검수 전에 적용합니다. 같은 공식 자료 링크만으로 정상
+          글을 차단하지 않습니다. 의미 중복 판정과 계정 제재는 구별합니다.
+        </p>
+        <p>
+          일반 글은 비공개 등록 후 최소 Jev 검수와 의미 중복 확인을 통과해야 공개합니다. 편집 자료는
+          같은 최종본에 대한 출처·근거·권리·개인정보 확인, 지정된 실제 Sol 6.1 xhigh 독립 검토, 실제
+          운영자 세션의 승인 및 실제 최종 Jev 결과를 모두 유지합니다. 원본 카톡, 가상
+          회원·댓글·활동량은 공개하지 않습니다.
+        </p>
+        <p>
+          전체 제공 기록의 처리 결과를 추적하되, 개인정보·권리 불명·유해 자료는 보류합니다. 원본
+          위치 대응과 분류 완료를 의미 검토나 공개 적격 확인으로 취급하지 않습니다. 자료 가공의 Jev
+          상한은 10달러, Codex 사용량은 기존 실행별 추산 한도인 20 proxy 단위 이내로 유지합니다. 이
+          단위는 실제 API 지출이나 정확한 주간 사용률이 아닙니다.
+        </p>
+        <h4>배포 전 확인</h4>
+        <ul>
+          <li>
+            실제 재표현·재배열·짜깁기·블록 경계 변경을 차단하고 새 조건·정정·근거·해법을 허용하는
+            어려운 표본을 확인합니다. 후보 검색과 최종 판정의 오류를 구분합니다.
+          </li>
+          <li>
+            재시도와 동시 요청에서 중복 저장·중복 과금·중복 공개가 없어야 합니다. 검수 오류와 예산
+            초과 때 비공개를 유지합니다.
+          </li>
+          <li>
+            기존 글 주소와 댓글, 세션 권한, 목록·자료 길잡이·로그인 후 복귀 문맥을 보존합니다. 공개
+            응답에 비공개 근거나 인증 값이 없어야 합니다.
+          </li>
+          <li>
+            타입 검사, 관련 테스트, 빌드, 헤드리스 화면·작성·댓글 검증을 완료합니다. 임시 주소에서도
+            실제 세션과 영속 저장을 확인합니다.
+          </li>
+        </ul>
+        <p>
+          임시 배포는 현재 Windows PC의 Node 서버와 SQLite를 Cloudflare Tunnel로 연결하는 안입니다.
+          PC와 프로세스가 실행 중이어야 서비스됩니다. 도메인은
+          <code>reversing.agentryx-ai.com</code>이며 원본·작업 DB·비밀값은 배포 산출물에서
+          제외합니다. 토큰의 터널 생성 권한과 실제 외부 연결은 별도 확인 대상입니다.
+        </p>
+        <h4>참고한 구현 근거</h4>
+        <p>
+          <a
+            href="https://docs.nvidia.com/nemo/curator/latest/curate-text/process-data/deduplication"
+            >NeMo Curator</a
+          >는 정확·근사·의미 중복 탐색을 구별합니다.
+          <a href="https://theory.stanford.edu/~aiken/publications/papers/sigmod03.pdf"
+            >Winnowing 논문</a
+          >은 위치를 보존하는 부분 복제 탐색의 참고입니다. 두 자료가 포럼의 새 기여 기준이나 차단
+          정확도를 보장하지는 않습니다.
+        </p>
+        <p>
+          <a
+            href="https://www.elastic.co/docs/reference/elasticsearch/mapping-reference/semantic-text-reference"
+            >Elastic의 semantic_text</a
+          >는 긴 글을 블록으로 검색합니다.
+          <a href="https://www.anthropic.com/engineering/contextual-retrieval"
+            >Contextual Retrieval</a
+          >은 문맥 없는 블록의 검색 한계를 설명합니다. 이 포럼의 전체 기여 비교와 후보 합집합은
+          이러한 검색 사례를 바탕으로 정한 제품 판단입니다.
+        </p>
+        <p>
+          <a href="https://docs.typesafe.ai/primitives">Typesafe primitives</a>는 서로 독립적인
+          사용자 지정 질문을 지원합니다. 실제 도메인 표본에서 충분성을 확인해야 합니다.
+          <a
+            href="https://api-security.owasp.org/editions/2023/en/0xa4-unrestricted-resource-consumption/"
+            >OWASP API4</a
+          >는 요청·자원·외부 서비스 비용 제한의 근거입니다.
+        </p>
+        <p>
+          <a
+            href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/"
+            >Cloudflare 터널 API 안내</a
+          >에 따라 전용 터널과 단일 하위 도메인만 연결합니다. 기존 다른 서비스의 DNS나 터널을
+          덮어쓰지 않습니다.
+        </p>
+      </details>
+      <details id="dag-review" class="appendix prose">
+        <summary>DAG 독립 설계·상호 합의와 검수</summary>
+        <p>
+          DAG의 독립 설계 관측 기준은 2026-10-03 02:20 KST입니다. 사용자가 같은 날 지속 사용을
+          확인했습니다. 최신 작업 상태는 이 페이지의 진행 상태와 DAG에 반영합니다.
+        </p>
+        <p>진행 상태·인라인 SVG·검증·합의 기록은 이 페이지에서 함께 관리합니다.</p>
+        <h4>독립 설계와 상호 검토</h4>
+        <p>
+          두 에이전트는 같은 관측 근거로 독립 초안을 만들었습니다. 이후 상대의 초안과 정규화한
+          통합안을 직접 대조하고, 남은 차이에 대해 의견을 교환했습니다. 독립 설계와 상호 검토 모두
+          지정 모델과 <code>max</code> 설정을 유지했으며, 두 에이전트 모두 12개 작업군·20개 간선의
+          구조·적용 범위·상태에 <code>AGREE</code>를 남겼습니다.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>검토자</th>
+              <th>모델·설정</th>
+              <th>독립 설계 시작</th>
+              <th>상호 검토 시작</th>
+              <th>최종 동의</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Sol / Peirce</td>
+              <td><code>gpt-6.1-sol / max</code></td>
+              <td>10월 3일 02:07:47 KST</td>
+              <td>02:38:18 KST</td>
+              <td>02:39:36 KST</td>
+            </tr>
+            <tr>
+              <td>Astra / Turing</td>
+              <td><code>gpt-6-astra / max</code></td>
+              <td>10월 3일 02:07:47 KST</td>
+              <td>02:38:19 KST</td>
+              <td>02:40:18 KST</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          검토 세션은 Sol <code>01a0fd96-134b-7421-bb6e-a2041c344347</code>, Astra
+          <code>01a0fd96-16bc-7c03-85ab-69bdf655906b</code>입니다. 모델·설정은 각 세션의 실행 문맥
+          기록으로 확인했습니다. 원본 독립안과 동의 전문은 공개하지 않는 로컬 감독 기록에
+          보존했습니다.
+        </p>
+        <h4>차이를 조정한 결과</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>쟁점</th>
+              <th>최종 합의</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>게시에 영향을 주는 코드·정책 변경</td>
+              <td>
+                H→F를 넣되 해당 변경분의 검증으로 한정합니다. 모든 실행 경로 보완의 완료를 모든 글의
+                게시 선행으로 삼지 않습니다.
+              </td>
+            </tr>
+            <tr>
+              <td>편집 단계에서 끝난 결과의 정산</td>
+              <td>
+                D→G를 넣어 독립 검토에 넘어가지 않은 보류·제외·미해결도 전체 마감에 반영합니다.
+                잔량을 기록했다는 이유로 완료 처리하지 않습니다.
+              </td>
+            </tr>
+            <tr>
+              <td>후보에서 편집으로 가는 경로</td>
+              <td>
+                B→D와 C→D는 항목별 대안입니다. 문맥이 충분한 후보는 C 전체 완료를 기다리지 않습니다.
+              </td>
+            </tr>
+            <tr>
+              <td>기존 공개 글의 품질 감사</td>
+              <td>
+                D→E는 새 초안 검토에만 적용합니다. 기게시본 감사는 기존 글을 사용해 바로 시작할 수
+                있습니다.
+              </td>
+            </tr>
+            <tr>
+              <td>실제 인증과 외부 주소</td>
+              <td>
+                J→K는 운영 Google 인증 완주에만 적용합니다. 메일 수신·공급자 설정·콜백 준비 전체를
+                터널에 묶지 않습니다.
+              </td>
+            </tr>
+            <tr>
+              <td>최초 릴리스의 새 게시</td>
+              <td>
+                F→L은 새·수정 공개본을 첫 릴리스에 포함할 때만 적용합니다. 해당 최종본의
+                승인·검토·게시 조건은 유지합니다.
+              </td>
+            </tr>
+            <tr>
+              <td>전체 자료 처리와 첫 외부 운영</td>
+              <td>
+                G와 L을 별도 완료 지점으로 둡니다. G의 중간 집계와 L의 준비는 지금 시작할 수 있으며
+                둘 사이에는 간선을 넣지 않습니다.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          관측 시점에 새 게시가 중단된 사실과 재개 범위 미확인을 유지했습니다. DAG 확인은 실제 게시
+          재개나 운영 권한을 부여하는 절차가 아닙니다.
+        </p>
+        <h4>병렬 진행 점검</h4>
+        <p>
+          후보 추출·문맥 복구·편집은 별도 실행과 위임 기록이 있습니다. 명령 기록만으로 현재 동시
+          실행이나 정상 종료를 확정하지 않습니다. <code>all</code> 실행의 단계별 풀 대기는 코드의
+          실행 방식이며, 전체 자료 완료를 다음 항목의 논리적 선행으로 추가하지 않았습니다.
+        </p>
+        <p>
+          로컬 백업 복구와 메일·인증 준비는 터널 차단과 분리해 확인할 수 있습니다. 실제 성공 증거와
+          수행 담당을 찾지 못한 범위는 배정·수행 여부 확인 대상으로 보고했습니다. 이미 다른 세션에서
+          수행 중일 가능성을 배제하지 않았습니다.
+        </p>
+        <p>
+          CPU·모델/도구 슬롯·공유 파일·예산 장부·SQLite의 경합은 별도 실행 제약으로 기록합니다. 실제
+          병렬 실행에서는 파일과 산출물의 담당 범위를 나누고 공유 상태를 조정해야 합니다.
+        </p>
+        <h4>다른 프로젝트 보고서 참고 범위</h4>
+        <p>
+          <code>C:/_projects</code>에서 보고서·개발기·진행 보고 이름에 해당하는 파일 1,556개를
+          검색하고 읽기 오류 없이 구조 신호를 조사했습니다. SHA-256 기준으로 중복을 제외하면
+          1,030개입니다. 모든 파일을 정독한 것은 아니며, 관련 사례의 세부 구성은 다음 네 보고서에서
+          확인했습니다.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>보고서</th>
+              <th>반영한 구성</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>ARZANA <code>docs/design/simulations/slice-progress.html</code></td>
+              <td>관측 시각, 현재와 과거 기록, 완료 조건과 남은 검증</td>
+            </tr>
+            <tr>
+              <td>copy-trading <code>docs/case-aoa-policy-report.html</code></td>
+              <td>근거와 미확인 항목의 구분</td>
+            </tr>
+            <tr>
+              <td>Eagle Eye <code>docs/qa/tagless-p2p4-progress-playbook.html</code></td>
+              <td>인라인 SVG, 작업 상태·완료 기준·근거 표</td>
+            </tr>
+            <tr>
+              <td>ai-investing <code>reports/progress/2026-10-01/report.template.html</code></td>
+              <td>진전, 남은 문제, 다음 조치와 확인 대기</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>다른 프로젝트의 진척 수치와 결론은 이 프로젝트의 사실 근거로 사용하지 않았습니다.</p>
+        <h4>보고서 화면 검증</h4>
+        <p>
+          이전 보고서의 12개 노드·20개 간선, 순환 없음, Mermaid·SVG 일치, 기존 본문 보존과 헤드리스
+          Chromium 1440·390·320px 검수는 2026-10-03 02:51 KST에 통과했습니다. 2026-10-03 03:04 KST의
+          통합 후 검수에서도 12개 노드·20개 간선과 합의된 의존 관계·순환 없음·근거 보존을
+          확인했습니다. 1440·390·320px 화면, 펼친 근거 표, 내부 이동과 파일 링크에서 넘침·누락·콘솔
+          오류가 없었습니다.
+        </p>
+        <h4>통합 전 피드백 기록</h4>
+        <p>
+          로컬 <code>HEAD</code>와 GitHub의 <code>refs/heads/main</code>을 직접 조회한 결과 모두
+          <code>f4b6aa7dc1ac4cf25295f875ee0d86b3464800e3</code>였습니다. 이 커밋까지의 푸시는
+          확인됐습니다. 이후 품질 정책·호출 복구 등의 변경은 작업 트리에 남아 있으므로, 관련 담당의
+          결과를 통합하고 최신 스냅샷의 필수 검증을 통과한 단위로 커밋·푸시하도록 피드백했습니다.
+          사용자가 이후 DAG를 확인했습니다.
+        </p>
+        <p>
+          병렬 진행 점검과 커밋·푸시 피드백을 메인 구현 세션
+          <code>01a0f30f-485a-74e0-b733-7c5741a24972</code>의 큐에 등록했습니다. 메시지 ID는
+          <code>01a0fdbf-b166-7a11-8d05-4436b59dce3d</code>이며 상대의 열람은 아직 확인하지
+          않았습니다.
+        </p>
+      </details>
+      <footer>
+        <p class="meta">
+          진척 수치는 실제 기록으로 갱신합니다. 진행 보고와 인라인 DAG, 검증·합의 근거는 이
+          페이지에서 함께 관리합니다.
+        </p>
+      </footer>
+    </main>
+    <script>
+      function revealTarget() {
+        const id = decodeURIComponent(location.hash.slice(1));
+        const target = document.getElementById(id);
+        if (!target) return;
+        let node = target;
+        while (node) {
+          if (node.tagName === "DETAILS") node.open = true;
+          node = node.parentElement;
+        }
+        requestAnimationFrame(() => target.scrollIntoView());
+      }
+      addEventListener("hashchange", revealTarget);
+      addEventListener("DOMContentLoaded", revealTarget);
+    </script>
+  </body>
+</html>

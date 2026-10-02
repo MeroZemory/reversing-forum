@@ -45,7 +45,7 @@ Google 콜백은 `BETTER_AUTH_URL`의 origin에 `/api/auth/callback/google`을 �
 
 중복 후보 검색에는 로컬 CPU에서 고정된 비양자화 임베딩 모델을 사용합니다. 애매한 판정에는 예산이 설정된 격리 Codex CLI를 호출합니다. 설정 누락·오류·불확실한 결과는 공개를 보류합니다. 모델 파일은 로컬 캐시에 준비해야 하며 자료 배치의 비공개 예산 설정을 코드에 넣지 않습니다.
 
-임시 운영은 Windows의 Node 서버·SQLite와 Cloudflare Tunnel을 연결하는 방식으로 준비했습니다. 실제 외부 배포와 메일·Google 인증의 운영 확인은 [현재 작업 상태](docs/work/launch-20261002/root-progress.md)에서 구분합니다.
+임시 운영은 Windows의 Node 서버·SQLite와 Cloudflare Tunnel을 연결하는 방식으로 준비했습니다. 진행 상태·병렬 작업 DAG·검증·합의 기록은 [진행 보고](docs/progress.html)에서 함께 관리합니다.
 
 ## 폴더
 
