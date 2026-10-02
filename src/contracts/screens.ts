@@ -30,6 +30,8 @@ export type PostDocument = {
   post: PostDetail | null;
 };
 export type PostScreenData = {
+  // Explicit future content language; current screens default to Korean.
+  locale?: string;
   post: PostDetail;
   comments: Comment[];
   viewer: Author | null;

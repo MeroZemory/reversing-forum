@@ -26,7 +26,12 @@ export function getPostPurpose(kind: PostKind): PostPurpose {
 
 export type PostStatus = "pending" | "published" | "held";
 
-export type Author = { id: string; name: string };
+export type Author = { id: string; name: string; role?: "editor" };
+export type EditorialProvenance = {
+  sourceType: "chat-editorial" | "independent-guide";
+  period: string;
+  verificationSummary: string;
+};
 export type Viewer = Author & { email: string };
 export type PostSummary = {
   id: string;
@@ -38,7 +43,11 @@ export type PostSummary = {
   createdAt: string;
   commentCount: number;
 };
-export type PostDetail = PostSummary & { body: string; status: PostStatus };
+export type PostDetail = PostSummary & {
+  body: string;
+  status: PostStatus;
+  editorial?: EditorialProvenance;
+};
 export type Comment = {
   id: string;
   postId: string;

@@ -1,6 +1,8 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import type { PostStatus } from "@/lib/types";
+import { configuredJevBudget } from "./jev-budget";
 
 type Screening = { status: PostStatus; evidence: string };
 const rules = {
@@ -27,6 +29,13 @@ export async function screenPost(state: string): Promise<Screening> {
       evidence: JSON.stringify({ mock, baseline: 1 }),
     };
   try {
+    // Bound the whole final content; never truncate it and screen only a prefix.
+    // This conservative byte cap leaves room within the documented token limits.
+    if (Buffer.byteLength(state, "utf8") > 24_000)
+      return {
+        status: "held",
+        evidence: JSON.stringify({ reason: "input_too_large", baseline: 1 }),
+      };
     const key = (
       process.env.TYPESAFE_API_KEY ||
       (process.env.TYPESAFE_KEY_FILE
@@ -37,6 +46,13 @@ export async function screenPost(state: string): Promise<Screening> {
       return {
         status: "pending",
         evidence: JSON.stringify({ reason: "missing_key", baseline: 1 }),
+      };
+    const budget = configuredJevBudget();
+    const reservation = budget?.reserve();
+    if (budget && !reservation)
+      return {
+        status: "pending",
+        evidence: JSON.stringify({ reason: "budget_exhausted", baseline: 1 }),
       };
     const response = await fetch("https://api.typesafe.ai/v1/systemone", {
       method: "POST",
@@ -86,6 +102,26 @@ export async function screenPost(state: string): Promise<Screening> {
       result && typeof result === "object" && "answers" in result
         ? result.answers
         : null;
+    const metadata =
+      result && typeof result === "object"
+        ? (result as Record<string, unknown>)
+        : {};
+    const usage =
+      metadata.usage && typeof metadata.usage === "object"
+        ? (metadata.usage as Record<string, unknown>)
+        : {};
+    if (
+      budget &&
+      reservation &&
+      !budget.settle(reservation, metadata.model, usage.input_tokens)
+    )
+      return {
+        status: "pending",
+        evidence: JSON.stringify({
+          reason: "unverified_usage_or_model",
+          baseline: 1,
+        }),
+      };
     const selected: Record<string, unknown> = {};
     let passed = true;
     for (const name of Object.keys(rules)) {
@@ -131,10 +167,18 @@ export async function screenPost(state: string): Promise<Screening> {
     }
     return {
       status: passed ? "published" : "held",
-      evidence: JSON.stringify({ baseline: 1, answers: selected }).slice(
-        0,
-        64_000,
-      ),
+      evidence: JSON.stringify({
+        baseline: 1,
+        rulesVersion: "jev-minimum-v1",
+        requestedModel: "jev-latest",
+        resolvedModel: metadata.model ?? null,
+        inputHash: createHash("sha256").update(state).digest("hex"),
+        usage: {
+          inputTokens: usage.input_tokens ?? null,
+          outputTokens: usage.output_tokens ?? null,
+        },
+        answers: selected,
+      }).slice(0, 64_000),
     };
   } catch {
     return {

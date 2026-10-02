@@ -12,6 +12,7 @@ import {
 } from "@/lib/types";
 import { db } from "./db";
 import { screenPost } from "./jev";
+import { editorialDisplayName } from "@/lib/editorial-labels";
 
 export class ForumError extends Error {
   constructor(
@@ -32,10 +33,42 @@ type Row = {
   status: PostDetail["status"];
   created_at: string;
   comment_count: number;
+  editorial_provenance?: string | null;
 };
-const select =
-  "SELECT p.*, (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.id) AS comment_count FROM posts p";
+function postSelect(): string {
+  const hasReceipts = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='editorial_receipts'",
+    )
+    .get();
+  const fields =
+    "p.id,p.author_id,p.author_name,p.title,p.body,p.kind,p.tags,p.status,p.created_at";
+  return `SELECT ${fields}, (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.id) AS comment_count${hasReceipts ? ", r.provenance AS editorial_provenance" : ""} FROM posts p${hasReceipts ? " LEFT JOIN editorial_receipts r ON r.post_id=p.id AND p.status='published'" : ""}`;
+}
 function detail(r: Row): PostDetail {
+  let editorial: PostDetail["editorial"];
+  if (
+    r.status === "published" &&
+    r.author_id === process.env.EDITORIAL_AUTHOR_USER_ID &&
+    r.editorial_provenance
+  ) {
+    try {
+      const p = JSON.parse(r.editorial_provenance);
+      if (
+        (p.type === "chat-editorial" || p.type === "independent-guide") &&
+        typeof p.period === "string" &&
+        typeof p.verificationSummary === "string"
+      ) {
+        editorial = {
+          sourceType: p.type,
+          period: p.period,
+          verificationSummary: p.verificationSummary,
+        };
+      }
+    } catch {
+      /* Invalid provenance cannot grant an editorial role. */
+    }
+  }
   return {
     id: r.id,
     title: r.title,
@@ -44,9 +77,12 @@ function detail(r: Row): PostDetail {
     kind: r.kind,
     tags: JSON.parse(r.tags),
     status: r.status,
-    author: { id: r.author_id, name: r.author_name },
+    author: editorial
+      ? { id: r.author_id, name: editorialDisplayName(), role: "editor" }
+      : { id: r.author_id, name: r.author_name },
     createdAt: r.created_at,
     commentCount: r.comment_count,
+    ...(editorial ? { editorial } : {}),
   };
 }
 export function listPosts({
@@ -76,11 +112,16 @@ export function listPosts({
   return (
     db
       .prepare(
-        `${select} WHERE ${clauses.join(" AND ")} ORDER BY p.created_at DESC, p.id LIMIT ?`,
+        `${postSelect()} WHERE ${clauses.join(" AND ")} ORDER BY p.created_at DESC, p.id LIMIT ?`,
       )
       .all(...args) as Row[]
   ).map((r) => {
-    const { body: _body, status: _status, ...summary } = detail(r);
+    const {
+      body: _body,
+      status: _status,
+      editorial: _editorial,
+      ...summary
+    } = detail(r);
     return summary;
   });
 }
@@ -142,11 +183,16 @@ export function listPostPage({
     const posts = (
       db
         .prepare(
-          `${select} WHERE ${where} ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?`,
+          `${postSelect()} WHERE ${where} ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?`,
         )
         .all(...args, size, (currentPage - 1) * size) as Row[]
     ).map((r) => {
-      const { body: _body, status: _status, ...summary } = detail(r);
+      const {
+        body: _body,
+        status: _status,
+        editorial: _editorial,
+        ...summary
+      } = detail(r);
       return summary;
     });
     return { posts, total, page: currentPage, pageSize: size, pageCount };
@@ -172,14 +218,16 @@ export function listPublicTopics(limit = 20): { tag: string; count: number }[] {
 export function listMyPosts(userId: string): PostDetail[] {
   return (
     db
-      .prepare(`${select} WHERE p.author_id=? ORDER BY p.created_at DESC, p.id`)
+      .prepare(
+        `${postSelect()} WHERE p.author_id=? ORDER BY p.created_at DESC, p.id`,
+      )
       .all(userId) as Row[]
   ).map(detail);
 }
 export function getPost(id: string, viewerId?: string): PostDetail | null {
   const row = db
     .prepare(
-      `${select} WHERE p.id=? AND (p.status='published' OR p.author_id=?)`,
+      `${postSelect()} WHERE p.id=? AND (p.status='published' OR p.author_id=?)`,
     )
     .get(id, viewerId ?? "") as Row | undefined;
   return row ? detail(row) : null;

@@ -16,7 +16,7 @@ import {
 } from "@/lib/feed-navigation";
 import { safeAuthReturn } from "@/lib/format";
 import { siteUrl } from "./site-config";
-import type { Author, PostStatus } from "@/lib/types";
+import type { Author, PostStatus, PostSummary, PostDetail } from "@/lib/types";
 import type {
   AuthScreenData,
   FeedScreenData,
@@ -30,6 +30,42 @@ import type {
 
 // Screen data is serializable and explicitly projected. Session credentials,
 // email addresses, database rows and screening evidence never enter a view.
+function summary(post: PostSummary): PostSummary {
+  return {
+    id: post.id,
+    title: post.title,
+    excerpt: post.excerpt,
+    kind: post.kind,
+    tags: post.tags,
+    createdAt: post.createdAt,
+    commentCount: post.commentCount,
+    author: {
+      id: post.author.id,
+      name: post.author.name,
+      ...(post.author.role === "editor" ? { role: "editor" as const } : {}),
+    },
+  };
+}
+
+function postDetail(post: PostDetail): PostDetail {
+  return {
+    ...summary(post),
+    body: post.body,
+    status: post.status,
+    ...(post.status === "published" &&
+    post.author.role === "editor" &&
+    post.editorial
+      ? {
+          editorial: {
+            sourceType: post.editorial.sourceType,
+            period: post.editorial.period,
+            verificationSummary: post.editorial.verificationSummary,
+          },
+        }
+      : {}),
+  };
+}
+
 export async function loadViewer(): Promise<Author | null> {
   const viewer = await getViewer();
   return viewer ? { id: viewer.id, name: viewer.name } : null;
@@ -44,8 +80,14 @@ export function loadFeedScreen(params: SearchParams): FeedScreenData {
   if (filters.tag) writeParams.set("tag", filters.tag);
   return {
     filters,
-    result,
-    topics: listPublicTopics(12),
+    result: {
+      posts: result.posts.map(summary),
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      pageCount: result.pageCount,
+    },
+    topics: listPublicTopics(12).map(({ tag, count }) => ({ tag, count })),
     from,
     writeHref: `/new?${writeParams}`,
   };
@@ -55,7 +97,8 @@ export function loadFeedScreen(params: SearchParams): FeedScreenData {
 export const loadPostDocument = cache(
   async (id: string): Promise<PostDocument> => {
     const viewer = await loadViewer();
-    return { viewer, post: getPost(id, viewer?.id) };
+    const post = getPost(id, viewer?.id);
+    return { viewer, post: post ? postDetail(post) : null };
   },
 );
 
@@ -83,7 +126,16 @@ export async function loadPostScreen(
     returnTo,
     fromMyPosts,
     postPath,
-    comments: published ? listComments(id) : [],
+    comments: published
+      ? listComments(id).map((comment) => ({
+          id: comment.id,
+          postId: comment.postId,
+          parentId: comment.parentId,
+          body: comment.body,
+          createdAt: comment.createdAt,
+          author: { id: comment.author.id, name: comment.author.name },
+        }))
+      : [],
     publicUrl: `${siteUrl()}/posts/${post.id}`,
   };
 }
@@ -106,7 +158,10 @@ export async function loadMyPostsScreen(
   const visible = status
     ? allPosts.filter((post) => post.status === status)
     : allPosts;
-  const posts = visible.map(({ body: _body, ...post }) => post);
+  const posts = visible.map((post) => ({
+    ...summary(post),
+    status: post.status,
+  }));
   return {
     kind: "ready",
     data: {

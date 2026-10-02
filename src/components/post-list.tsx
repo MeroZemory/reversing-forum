@@ -6,15 +6,19 @@ import { type FeedFilters } from "@/lib/feed-navigation";
 import { PostLink } from "./feed-navigation";
 import { KindBadge } from "./ui/kind-badge";
 import { TopicLink } from "./ui/topic-link";
+import { EditorialAuthor } from "./ui/editorial-author";
+import { authorDisplayName } from "@/lib/editorial-labels";
 
 export function PostList({
   posts,
   filters = {},
   from = "/",
+  locale = "ko",
 }: {
   posts: PostSummary[];
   filters?: FeedFilters;
   from?: string;
+  locale?: string;
 }) {
   const { purpose, query, tag } = filters;
   if (posts.length === 0)
@@ -82,9 +86,12 @@ export function PostList({
                 )}
               </td>
               <td className="forum-post-author">
-                <span className="post-author-name" title={post.author.name}>
+                <span
+                  className="post-author-name"
+                  title={authorDisplayName(post.author, locale)}
+                >
                   <span className="sr-only">작성자 </span>
-                  {post.author.name}
+                  <EditorialAuthor author={post.author} locale={locale} />
                 </span>
                 <time dateTime={post.createdAt}>
                   {formatDate(post.createdAt)}
