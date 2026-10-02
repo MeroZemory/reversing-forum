@@ -685,7 +685,7 @@ it("다른 배치에서 복구된 동일 근거가 있어도 이미 준비한 pa
   });
 });
 
-it("dispositions 없이 needsContext 후보 근거만 남은 repair 결과도 복구하며 원래 후보는 승인하거나 숨기지 않는다", () => {
+it("완전한 target 복구는 원본을 보존하면서 후보의 문맥 보류를 해제한다", () => {
   const f = fixture();
   const original: BatchCandidate = {
     localId: "repaired",
@@ -698,6 +698,7 @@ it("dispositions 없이 needsContext 후보 근거만 남은 repair 결과도 �
   };
   complete(f, [], [original]);
   const before = snapshot(f),
+    candidateKey = f.store.listCandidates()[0].candidateKey,
     [input] = f.store.listContextRecoveryInputs();
   expect(f.store.summary().messageDispositions.needsContext).toBe(2);
   expect(input.blocks[0].targetIds).toEqual([2, 3]);
@@ -706,6 +707,8 @@ it("dispositions 없이 needsContext 후보 근거만 남은 repair 결과도 �
       {
         ...original,
         localId: "supplement",
+        title: "복구한 메모리 분석",
+        topic: "복구한 기술",
         questionIds: [2],
         responseIds: [3, 4],
         uncertainties: [],
@@ -717,7 +720,12 @@ it("dispositions 없이 needsContext 후보 근거만 남은 repair 결과도 �
   expect(snapshot(f)).toBe(before);
   expect(f.store.listCandidates()).toHaveLength(1);
   expect(f.store.listCandidates()[0]).toMatchObject({
-    needsContext: true,
+    candidateKey,
+    localId: "repaired",
+    title: "복구한 메모리 분석",
+    topic: "복구한 기술",
+    uncertainties: [],
+    needsContext: false,
     sourceBatchIds: [f.batch.batchId],
     responseIds: [
       f.batch.input.messages[3].id,
@@ -742,6 +750,7 @@ it("needsContext 후보의 재검토가 누락되거나 여전히 불확실하�
   complete(f, [], [original]);
   const [input] = f.store.listContextRecoveryInputs();
   f.store.importContextRecovery(input, output(input));
+  expect(f.store.listCandidates()[0].needsContext).toBe(true);
   expect(f.store.summary().messageDispositions.needsContext).toBe(2);
   const [next] = f.store.listContextRecoveryInputs();
   expect(next.blocks[0].targetIds).toEqual([2, 3]);
@@ -755,4 +764,203 @@ it("needsContext 후보의 재검토가 누락되거나 여전히 불확실하�
     2, 3,
   ]);
   expect(f.store.summary().messageDispositions.needsContext).toBe(2);
+  expect(f.store.listCandidates()[0].needsContext).toBe(true);
 });
+
+it.each(["missing", "noncandidate", "role-change", "unresolved"])(
+  "부분 또는 불확실한 복구는 원래 후보를 계속 보류한다: %s",
+  (kind) => {
+    const f = fixture();
+    const original: BatchCandidate = {
+      localId: "original",
+      title: "부분 분석",
+      topic: "기술",
+      questionIds: [f.batch.input.messages[2].id],
+      responseIds: [f.batch.input.messages[3].id],
+      uncertainties: ["응답 관계 확인 필요"],
+      needsContext: true,
+    };
+    complete(f, [], [original]);
+    const before = snapshot(f),
+      [input] = f.store.listContextRecoveryInputs();
+    f.store.importContextRecovery(
+      input,
+      output(input, {
+        candidates: [
+          {
+            ...original,
+            localId: "recovery",
+            title: "복구한 분석",
+            questionIds: kind === "role-change" ? [2, 3] : [2],
+            responseIds: kind === "unresolved" ? [3] : [],
+            uncertainties: [],
+            needsContext: kind === "unresolved",
+          },
+        ],
+        noncandidateRanges: kind === "noncandidate" ? [[3, 3]] : [],
+      }),
+    );
+    expect(snapshot(f)).toBe(before);
+    expect(f.store.listCandidates()[0]).toMatchObject({
+      localId: "original",
+      title: original.title,
+      uncertainties: original.uncertainties,
+      needsContext: true,
+    });
+  },
+);
+
+it.each([false, true])(
+  "질문 overlap이 애매한 후보는 완전한 복구도 해제하지 않는다: %s",
+  (needsContext) => {
+    const f = fixture();
+    const candidate = (localId: string, indexes: number[]): BatchCandidate => ({
+      localId,
+      title: "합성 분석",
+      topic: "기술",
+      questionIds: indexes.map((i) => f.batch.input.messages[i].id),
+      responseIds: [],
+      uncertainties: [],
+      needsContext,
+    });
+    // The third contribution overlaps two independently identified questions.
+    complete(
+      f,
+      [4],
+      [candidate("a", [2]), candidate("b", [3]), candidate("c", [2, 3])],
+    );
+    const [input] = f.store.listContextRecoveryInputs();
+    f.store.importContextRecovery(
+      input,
+      output(input, {
+        candidates: [
+          {
+            ...candidate("recovery", []),
+            questionIds: [2, 3],
+            responseIds: [4],
+            needsContext: true,
+          },
+        ],
+      }),
+    );
+    const [next] = f.store.listContextRecoveryInputs();
+    f.store.importContextRecovery(
+      next,
+      output(next, {
+        candidates: [
+          {
+            ...candidate("resolved", []),
+            questionIds: [2, 3],
+            responseIds: [4],
+            needsContext: false,
+          },
+        ],
+      }),
+    );
+    expect(
+      f.store.listCandidates().find((c) => c.localId === "c")?.needsContext,
+    ).toBe(true);
+  },
+);
+
+it.each([false, true])(
+  "복구 뒤 추가된 overlap 근거와 링크 없는 unresolved 검토는 사라지지 않는다: %s",
+  (addEvidence) => {
+    const f = fixture({ ...ready, maxMessages: 4, overlap: 2 });
+    const first = f.batches[0],
+      second = f.batches[1];
+    const original: BatchCandidate = {
+      localId: "original",
+      title: "부분 분석",
+      topic: "기술",
+      questionIds: [first.input.messages[2].id],
+      responseIds: addEvidence ? [first.input.messages[3].id] : [],
+      uncertainties: [],
+      needsContext: true,
+    };
+    const importBatch = (batch: typeof first, candidates: BatchCandidate[]) => {
+      const evidence = new Set(
+        candidates.flatMap((c) => [...c.questionIds, ...c.responseIds]),
+      );
+      f.store.importResult(
+        batch.batchId,
+        JSON.stringify({
+          batchId: batch.batchId,
+          inputHash: batch.inputHash,
+          complete: true,
+          candidates,
+          dispositions: batch.input.messages
+            .filter((m) => !evidence.has(m.id))
+            .map((m) => ({
+              messageId: m.id,
+              kind: "noncandidate",
+              reason: "합성 분류",
+            })),
+        }),
+      );
+    };
+    if (!addEvidence) {
+      f.store.importResult(
+        second.batchId,
+        JSON.stringify({
+          batchId: second.batchId,
+          inputHash: second.inputHash,
+          complete: true,
+          candidates: [],
+          dispositions: second.input.messages.map((m, i) => ({
+            messageId: m.id,
+            kind: i === 1 ? "needs-context" : "noncandidate",
+            reason: "합성 분류",
+          })),
+        }),
+      );
+    }
+    importBatch(first, [original]);
+    const packets = f.store.listContextRecoveryInputs();
+    const input = packets.find((p) => p.blocks[0].batchId === first.batchId)!;
+    f.store.importContextRecovery(
+      input,
+      output(input, {
+        candidates: [
+          {
+            ...original,
+            questionIds: [2],
+            responseIds: [3],
+            needsContext: false,
+          },
+        ],
+      }),
+    );
+    expect(f.store.listCandidates()[0].needsContext).toBe(false);
+    if (addEvidence)
+      importBatch(second, [
+        {
+          ...original,
+          localId: "late",
+          responseIds: [second.input.messages[2].id],
+        },
+      ]);
+    if (addEvidence)
+      expect(f.store.listCandidates()[0]).toMatchObject({
+        needsContext: true,
+        sourceBatchIds: [first.batchId, second.batchId].sort(),
+        responseIds: [
+          first.input.messages[3].id,
+          second.input.messages[2].id,
+        ].sort(),
+      });
+    const late = (
+      addEvidence ? f.store.listContextRecoveryInputs() : packets
+    ).find((p) => p.blocks[0].batchId === second.batchId)!;
+    f.store.importContextRecovery(late, output(late));
+    expect(f.store.listCandidates()[0].needsContext).toBe(true);
+    // Starting a new run must hide every old contribution and recovery.
+    f.store.prepare([f.source], {
+      ...ready,
+      maxMessages: 4,
+      overlap: 2,
+      promptVersion: "new-run",
+    });
+    expect(f.store.listCandidates()).toEqual([]);
+  },
+);

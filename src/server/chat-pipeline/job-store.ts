@@ -211,20 +211,66 @@ export class ChatJobStore {
   listCandidates() {
     const grouped = new Map<string, BatchCandidate>();
     const sourceBatches = new Map<string, Set<string>>();
+    const recoveries = this.recoveryRows().map((row) => ({
+      ...row,
+      block: (JSON.parse(row.input) as ContextRecoveryInput).blocks[0],
+      result: JSON.parse(row.record) as {
+        output: BatchOutput;
+        targetIds: string[];
+      },
+    }));
+    const recoveryById = new Map(recoveries.map((r) => [r.id, r]));
+    const latestTargetReview = new Map<string, string>();
+    for (const recovery of recoveries)
+      for (const id of recovery.result.targetIds)
+        latestTargetReview.set(id, recovery.id);
+    const contributions = new Map<
+      string,
+      Array<{
+        record: BatchCandidate;
+        batchId: string;
+        outputHash: string;
+        recoveryId: string | null;
+        ambiguous: boolean;
+      }>
+    >();
     for (const row of this.db
       .prepare(
-        `SELECT l.candidate_key,l.record,l.batch_id,0 AS origin,l.rowid AS position FROM candidate_links l JOIN jobs j ON j.id=l.batch_id JOIN runs r ON r.id=j.run_id WHERE r.active=1
-         UNION ALL SELECT l.candidate_key,l.record,c.batch_id,1 AS origin,l.rowid AS position FROM context_recovery_links l JOIN context_recoveries c ON c.id=l.recovery_id JOIN runs r ON r.id=c.run_id WHERE r.active=1 ORDER BY origin,position`,
+        `SELECT l.candidate_key,l.record,l.batch_id,o.hash AS output_hash,o.record AS source,NULL AS recovery_id,0 AS origin,l.rowid AS position FROM candidate_links l JOIN jobs j ON j.id=l.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=j.run_id WHERE r.active=1
+         UNION ALL SELECT l.candidate_key,l.record,c.batch_id,c.output_hash,c.record,c.id,1 AS origin,l.rowid AS position FROM context_recovery_links l JOIN context_recoveries c ON c.id=l.recovery_id JOIN runs r ON r.id=c.run_id WHERE r.active=1 ORDER BY origin,position`,
       )
       .all() as Array<{
       candidate_key: string;
       record: string;
       batch_id: string;
+      output_hash: string;
+      source: string;
+      recovery_id: string | null;
     }>) {
       const sources = sourceBatches.get(row.candidate_key) ?? new Set<string>();
       sources.add(row.batch_id);
       sourceBatches.set(row.candidate_key, sources);
       const next = JSON.parse(row.record) as BatchCandidate;
+      const source = JSON.parse(row.source) as {
+        output: BatchOutput;
+        linked?: Array<{ localId: string; ambiguous: boolean }>;
+      };
+      const parts = contributions.get(row.candidate_key) ?? [];
+      parts.push({
+        record: next,
+        batchId: row.batch_id,
+        outputHash: row.output_hash,
+        recoveryId: row.recovery_id,
+        // Link-only blocking encodes ambiguous question overlap, not context.
+        ambiguous:
+          source.linked?.some(
+            (c) => c.localId === next.localId && c.ambiguous,
+          ) ||
+          (next.needsContext &&
+            !source.output.candidates.find((c) => c.localId === next.localId)
+              ?.needsContext),
+      });
+      contributions.set(row.candidate_key, parts);
       const previous = grouped.get(row.candidate_key);
       grouped.set(
         row.candidate_key,
@@ -245,11 +291,59 @@ export class ChatJobStore {
           : next,
       );
     }
-    return [...grouped].map(([candidateKey, record]) => ({
-      candidateKey,
-      ...record,
-      sourceBatchIds: [...sourceBatches.get(candidateKey)!].sort(),
-    }));
+    return [...grouped].map(([candidateKey, record]) => {
+      const parts = contributions.get(candidateKey)!;
+      const complete = parts.filter(
+        (p) => p.recoveryId && !p.record.needsContext,
+      );
+      const covers = (recovered: BatchCandidate, needed: BatchCandidate) =>
+        needed.questionIds.every((id) => recovered.questionIds.includes(id)) &&
+        needed.responseIds.every((id) => recovered.responseIds.includes(id));
+      const remaining = parts.filter((part) => {
+        if (!part.record.needsContext || part.ambiguous) return true;
+        return !complete.some((resolved) => {
+          const recovery = recoveryById.get(resolved.recoveryId!)!;
+          return (
+            recovery.batch_id === part.batchId &&
+            (part.recoveryId
+              ? recovery.block.previousRecoveryIds.includes(part.recoveryId)
+              : recovery.block.outputHash === part.outputHash) &&
+            covers(resolved.record, part.record) &&
+            [...part.record.questionIds, ...part.record.responseIds].every(
+              (id) => recovery.result.targetIds.includes(id),
+            )
+          );
+        });
+      });
+      // A later target review can re-open context even without a candidate link.
+      // Neighbors are evidence only; they never silently resolve target decisions.
+      const needsContext =
+        remaining.some((p) => p.record.needsContext) ||
+        [...record.questionIds, ...record.responseIds].some((id) => {
+          const review = latestTargetReview.get(id);
+          return (
+            review !== undefined &&
+            !complete.some(
+              (p) =>
+                p.recoveryId === review &&
+                [...p.record.questionIds, ...p.record.responseIds].includes(id),
+            )
+          );
+        });
+      const metadata = !needsContext
+        ? complete.findLast((p) => covers(p.record, record))?.record
+        : undefined;
+      return {
+        candidateKey,
+        ...record,
+        ...(metadata ? { title: metadata.title, topic: metadata.topic } : {}),
+        uncertainties: metadata
+          ? metadata.uncertainties
+          : [...new Set(remaining.flatMap((p) => p.record.uncertainties))],
+        needsContext,
+        sourceBatchIds: [...sourceBatches.get(candidateKey)!].sort(),
+      };
+    });
   }
   private recoveryRows() {
     return this.db
