@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ChatJobStore } from "../src/server/chat-pipeline/job-store";
 import { hash, validateBatchOutput } from "../src/server/chat-pipeline/prepare";
@@ -34,6 +34,16 @@ function readJson(file: string, maxBytes = 5_000_000): unknown {
   } catch {
     throw new Error("invalid-native-json");
   }
+}
+
+export function nativeFailureCode(error: unknown): string {
+  const sqliteCode =
+    error instanceof Error && "code" in error ? error.code : undefined;
+  if (sqliteCode === "SQLITE_BUSY" || sqliteCode === "SQLITE_LOCKED")
+    return "native-database-busy";
+  return error instanceof Error && /^[a-z-]+$/.test(error.message)
+    ? error.message
+    : "native-format-failed";
 }
 
 /** Pure reconstruction: callers supply only minimized inputs and local Jev evidence. */
@@ -275,11 +285,23 @@ export function repairRelevantOutput(
     ),
   );
   if (
-    blocks.length !== supplied.blocks.length ||
+    blocks.length < 1 ||
     new Set(blocks.map((b) => b.batchId)).size !== blocks.length ||
     blocks.some((b) => !supplied.blocks.some((s) => s.batchId === b.batchId))
   )
     throw new Error("out-of-scope-native-block");
+  const missingBlocks = supplied.blocks
+    .filter((b) => !blocks.some((value) => value.batchId === b.batchId))
+    .map((b) => b.batchId);
+  const repairBlocks: Record<string, unknown>[] = [
+    ...blocks,
+    ...missingBlocks.map((batchId) => ({
+      batchId,
+      candidates: [],
+      noncandidateRanges: [],
+      contextIds: [],
+    })),
+  ];
   const reports: Array<{
     batchId: string;
     original: unknown;
@@ -295,7 +317,7 @@ export function repairRelevantOutput(
       normalized: string;
     }>;
   }> = [];
-  const repairedBlocks = blocks.map((block) => {
+  const repairedBlocks = repairBlocks.map((block) => {
     const batch = batches.find((b) => b.batchId === block.batchId);
     if (!batch) throw new Error("native-batch-input-mismatch");
     const kept = new Set(
@@ -430,7 +452,7 @@ export function repairRelevantOutput(
     for (const i of duplicateDispositions) context.add(i);
     const report = {
       batchId: batch.batchId,
-      original: block,
+      original: missingBlocks.includes(batch.batchId) ? null : block,
       omittedCandidates: [] as Array<{ candidate: unknown; reason: string }>,
       candidateConflicts: [] as number[],
       dispositionConflicts: [...duplicateDispositions].sort((a, b) => a - b),
@@ -536,6 +558,8 @@ export function repairRelevantOutput(
     reconstructedHash: hash(prepared),
     lunaExaminedEntirePacket: false,
     semanticReviewApproved: false,
+    fullMeaningComplete: false,
+    missingBlocks,
     completeMeaning:
       "local coverage bookkeeping only; model full-range review unverified",
     counts: {
@@ -552,6 +576,7 @@ export function repairRelevantOutput(
         0,
       ),
       missing: reports.reduce((n, r) => n + r.missingIds.length, 0),
+      missingBlocks: missingBlocks.length,
       reversedRanges: reports.reduce((n, r) => n + r.reversedRanges.length, 0),
       needsContextMessages: all.filter((d) => d.kind === "needs-context")
         .length,
@@ -576,6 +601,116 @@ export function repairRelevantOutput(
     })),
   };
   return { repaired, report, prepared };
+}
+
+/** Model output validation only; transport, input integrity and DB errors are excluded. */
+export const quarantineValidationCodes = new Set([
+  "invalid-native-envelope",
+  "invalid-native-block",
+  "invalid-native-range",
+  "invalid-candidate-schema",
+  "out-of-scope-native-evidence",
+  "out-of-scope-native-block",
+  "out-of-scope-evidence",
+  "invalid-output-envelope",
+  "invalid-output-dispositions",
+  "conflicting-message-disposition",
+  "incomplete-message-dispositions",
+  "duplicate-local-id",
+  "raw-source-reproduction",
+  "candidate-overflow",
+  "output-overflow",
+  "invalid-existing-output",
+  "output-scope-mismatch",
+]);
+
+export function contextOnlyNativeOutput(
+  output: unknown,
+  packet: Packet,
+  batches: readonly PreparedBatch[],
+  triage: unknown,
+  rawOutput?: string,
+) {
+  let validationCode = "";
+  try {
+    reconstructNativeOutputs(output, packet, batches, triage);
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !quarantineValidationCodes.has(error.message)
+    )
+      throw error;
+    validationCode = error.message;
+  }
+  if (!validationCode) throw new Error("quarantine-requires-invalid-output");
+  const supplied = buildRelevant(packet, triage as Triage).packet;
+  const quarantined = {
+    packetId: packet.packetId,
+    complete: true,
+    blocks: supplied.blocks.map((b) => ({
+      batchId: b.batchId,
+      candidates: [],
+      noncandidateRanges: [],
+      contextIds: b.messages
+        .filter((m) => m && !m[3].includes("held"))
+        .map((m) => m![0]),
+    })),
+  };
+  // Revalidate the deterministic envelope against EVERY original batch before writes.
+  const prepared = reconstructNativeOutputs(
+    quarantined,
+    packet,
+    batches,
+    triage,
+  ).map((result) => {
+    const pending = {
+      ...result,
+      dispositions: result.dispositions!.map((d) => ({
+        ...d,
+        kind: "needs-context" as const,
+        reason: "모델분류미확인: 출력 검증 실패로 비공개 보류",
+      })),
+    };
+    return validateBatchOutput(
+      JSON.stringify(pending),
+      batches.find((b) => b.batchId === result.batchId)!,
+    );
+  });
+  const report = {
+    version: 1,
+    source: "deterministic-quarantine",
+    modelResultAccepted: false,
+    fullMeaningComplete: false,
+    lunaExaminedEntirePacket: false,
+    semanticReviewApproved: false,
+    packetId: packet.packetId,
+    outputHash: hash(rawOutput ?? output),
+    sourceInputHash: hash(supplied),
+    originalInputHash: hash(packet),
+    validationCode,
+    quarantinedOutputHash: hash(quarantined),
+    reconstructedHash: hash(prepared),
+    completeMeaning:
+      "local scope bookkeeping only; rejected model result was not adopted",
+    counts: {
+      candidates: 0,
+      noncandidate: 0,
+      needsContextCandidates: 0,
+      suppliedNonheld: quarantined.blocks.reduce(
+        (n, b) => n + b.contextIds.length,
+        0,
+      ),
+      needsContextMessages: prepared.reduce(
+        (n, b) => n + b.dispositions!.length,
+        0,
+      ),
+    },
+    privateCoverage: prepared.map((b) => ({
+      batchId: b.batchId,
+      dispositions: b.dispositions,
+    })),
+  };
+  return { quarantined, report, prepared };
 }
 
 async function main() {
@@ -644,7 +779,8 @@ async function main() {
     } else if (
       command === "import" ||
       command === "import-relevant" ||
-      command === "repair-relevant"
+      command === "repair-relevant" ||
+      command === "context-only"
     ) {
       const args = process.argv.slice(3);
       if (
@@ -659,6 +795,11 @@ async function main() {
         !/^[a-f0-9]{64}$/.test(envelope.packetId)
       )
         throw new Error("invalid-native-envelope");
+      if (
+        command === "context-only" &&
+        basename(resolve(args[0])) !== `${envelope.packetId}.output.json`
+      )
+        throw new Error("quarantine-source-path-mismatch");
       const manifest = object(
         readJson(resolve(directory, "manifest.json")),
         "invalid-native-manifest",
@@ -736,9 +877,48 @@ async function main() {
         command === "repair-relevant"
           ? repairRelevantOutput(output, packet, batches, triage)
           : undefined;
+      const quarantine =
+        command === "context-only"
+          ? contextOnlyNativeOutput(
+              output,
+              packet,
+              batches,
+              triage,
+              readFileSync(resolve(args[0]), "utf8"),
+            )
+          : undefined;
       const prepared =
+        quarantine?.prepared ??
         repair?.prepared ??
         reconstructNativeOutputs(output, packet, batches, triage);
+      if (quarantine && batches.some((b) => b.status === "completed"))
+        throw new Error("conflicting-batch-output");
+      let quarantineFiles:
+        { contextFile: string; quarantineReportFile: string } | undefined;
+      if (quarantine) {
+        const prefix = resolve(
+          directory,
+          "../triage/relevant",
+          `${envelope.packetId}.context-only-v1-${hash(quarantine.report)}`,
+        );
+        quarantineFiles = {
+          contextFile: `${prefix}.output.json`,
+          quarantineReportFile: `${prefix}.report.json`,
+        };
+        const artifacts = [
+          [quarantineFiles.contextFile, quarantine.quarantined],
+          [quarantineFiles.quarantineReportFile, quarantine.report],
+        ] as const;
+        for (const [file, value] of artifacts)
+          if (existsSync(file) && hash(readJson(file)) !== hash(value))
+            throw new Error("quarantine-artifact-conflict");
+        for (const [file, value] of artifacts)
+          if (!existsSync(file))
+            writeFileSync(file, JSON.stringify(value, null, 2), {
+              flag: "wx",
+              mode: 0o600,
+            });
+      }
       let repairFiles:
         { repairedFile: string; repairReportFile: string } | undefined;
       if (repair) {
@@ -750,7 +930,7 @@ async function main() {
           ),
           repairReportFile: resolve(
             privateDirectory,
-            `${envelope.packetId}.repair-report.json`,
+            `${envelope.packetId}.repair-report-${hash(repair.report)}.json`,
           ),
         };
         if (Object.values(repairFiles).includes(resolve(args[0])))
@@ -803,7 +983,17 @@ async function main() {
               .flatMap((b) => b.dispositions ?? [])
               .filter((d) => d.reason.startsWith("Jev")).length,
           },
-          lunaExaminedEntirePacket: repair ? false : !triage,
+          lunaExaminedEntirePacket: repair || quarantine ? false : !triage,
+          ...(quarantine
+            ? {
+                quarantined: true,
+                modelResultAccepted: false,
+                fullMeaningComplete: false,
+                source: quarantine.report.source,
+                ...quarantineFiles,
+                contextCounts: quarantine.report.counts,
+              }
+            : {}),
           ...(repair
             ? {
                 repaired: true,
@@ -817,10 +1007,7 @@ async function main() {
       console.log(JSON.stringify(store.summary()));
     else throw new Error("native-command-required");
   } catch (error) {
-    const code =
-      error instanceof Error && /^[a-z-]+$/.test(error.message)
-        ? error.message
-        : "native-format-failed";
+    const code = nativeFailureCode(error);
     console.error(`비공개 배치의 범위·결과 형식을 확인해 주세요. (${code})`);
     process.exitCode = 1;
   } finally {

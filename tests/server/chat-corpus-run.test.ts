@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { ChildProcess } from "node:child_process";
+import { stopCodexProcess } from "../../src/server/chat-pipeline/relative-context";
 import {
   mkdtempSync,
   mkdirSync,
@@ -10,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   nodeRunner,
+  createNodeRunner,
   parseOptions,
   runCorpus,
   type Launch,
@@ -94,16 +99,485 @@ function candidateRunner(calls: Launch[]): Runner {
     return { code: 0 };
   };
 }
+const contextOnlyReceipt = () => ({
+  quarantined: true,
+  modelResultAccepted: false,
+  fullMeaningComplete: false,
+  source: "deterministic-quarantine",
+  importedBatches: 1,
+  importedCandidates: 0,
+  contextCounts: {
+    candidates: 0,
+    noncandidate: 0,
+    needsContextCandidates: 0,
+    needsContextMessages: 1,
+  },
+});
 
 describe("corpus orchestration boundaries", () => {
+  it.each([
+    { enabled: false, fresh: false, transportFailed: false, native: false },
+    { enabled: true, fresh: false, transportFailed: false, native: false },
+    { enabled: true, fresh: true, transportFailed: false, native: false },
+    { enabled: true, fresh: true, transportFailed: true, native: false },
+    { enabled: true, fresh: false, transportFailed: false, native: true },
+  ])(
+    "complete:false prefix is quarantined only after successful relevant transport with opt-in: %j",
+    async ({ enabled, fresh, transportFailed, native }) => {
+      const { root, directory, packets } = fixture(1);
+      const packet = packets[0];
+      const source = read(packet.file);
+      source.blocks.push({
+        batchId: id(99),
+        messages: [[0, "synthetic", "private synthetic context", []]],
+      });
+      write(packet.file, source);
+      const prefix = {
+        ...candidateOutput(packet.packetId),
+        complete: false,
+        blocks: [
+          {
+            batchId: packet.packetId,
+            candidates: [
+              {
+                localId: "c1",
+                title: "합성 분석 질문",
+                topic: "분석",
+                questionIds: [0],
+                responseIds: [],
+                uncertainties: [],
+                needsContext: false,
+              },
+            ],
+            noncandidateRanges: [],
+            contextIds: [],
+          },
+        ],
+      };
+      const output = native
+        ? join(directory, "native", `${packet.packetId}.output.json`)
+        : packet.file.replace(".input.json", ".output.json");
+      if (native) write(output.replace(".output.json", ".input.json"), source);
+      if (!fresh) write(output, prefix);
+      const calls: Launch[] = [];
+      const runner: Runner = async (launch) => {
+        calls.push(launch);
+        const { script, args } = command(launch);
+        if (script === "chat-codex-run.ts") {
+          write(args[2], prefix);
+          return {
+            code: transportFailed ? 1 : 0,
+            errorCode: transportFailed ? "incomplete-output" : undefined,
+          };
+        }
+        expect(script).toBe("chat-native-batches.ts");
+        expect(args).toEqual(["context-only", output]);
+        const receipt = contextOnlyReceipt();
+        receipt.importedBatches = 2;
+        receipt.contextCounts.needsContextMessages = 2;
+        return { code: 0, stdout: JSON.stringify(receipt) };
+      };
+      const options = {
+        root,
+        phase: "candidate" as const,
+        concurrency: 1,
+        repairRelevant: true,
+        quarantineInvalidCandidates: enabled,
+      };
+      const result = await runCorpus(options, runner);
+      const recovered = enabled && !transportFailed && !native;
+      expect(result.code).toBe(recovered ? 0 : 1);
+      expect(readFileSync(output, "utf8")).toBe(JSON.stringify(prefix));
+      expect(
+        calls.filter((c) => command(c).script === "chat-codex-run.ts"),
+      ).toHaveLength(fresh ? 1 : 0);
+      expect(
+        calls.filter((c) => command(c).args[0] === "context-only"),
+      ).toHaveLength(recovered ? 1 : 0);
+      expect(result.progress.counts.imported).toBe(recovered ? 2 : 0);
+      expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+        "incomplete-output",
+      );
+      if (recovered) {
+        expect(
+          result.progress.steps[`import:${packet.packetId}`],
+        ).toMatchObject({
+          count: 2,
+          quarantined: true,
+          needsContext: 2,
+          needsContextCandidates: 0,
+        });
+        calls.length = 0;
+        expect((await runCorpus(options, runner)).code).toBe(0);
+        expect(calls).toHaveLength(0);
+      }
+    },
+  );
+
+  it.each(["native", "schema"])(
+    "bulk quarantine continues and resumes with an immutable rejected %s output and separate checkpoint",
+    async (origin) => {
+      const { root, directory, packets } = fixture();
+      for (const p of packets)
+        write(
+          p.file.replace(".input.json", ".output.json"),
+          candidateOutput(p.packetId),
+        );
+      const rejected = packets[0].file.replace(".input.json", ".output.json");
+      const bad = candidateOutput(packets[0].packetId);
+      if (origin === "native") bad.blocks[0].noncandidateRanges = [[0, 999]];
+      write(rejected, origin === "schema" ? { ...bad, extra: true } : bad);
+      const before = readFileSync(rejected, "utf8");
+      const calls: Launch[] = [];
+      const runner: Runner = async (launch) => {
+        calls.push(launch);
+        const { script, args } = command(launch);
+        expect(script).toBe("chat-native-batches.ts");
+        if (args[0] === "context-only")
+          return { code: 0, stdout: JSON.stringify(contextOnlyReceipt()) };
+        if (args[1] === rejected)
+          return {
+            code: 1,
+            errorCode: "invalid-native-range",
+            stdout: "private diagnostic test@example.com",
+          };
+        return { code: 0 };
+      };
+      const options = {
+        root,
+        phase: "candidate" as const,
+        concurrency: 4,
+        quarantineInvalidCandidates: true,
+        separateCandidateProgress: true,
+      };
+      const result = await runCorpus(options, runner);
+      expect(result.code).toBe(0);
+      expect(result.progress.counts).toMatchObject({
+        imported: 3,
+        quarantinedPackets: 1,
+        needsContext: 1,
+        needsContextCandidates: 0,
+      });
+      expect(
+        result.progress.steps[`import:${packets[0].packetId}`],
+      ).toMatchObject({ quarantined: true, needsContext: 1 });
+      expect(
+        calls.filter((c) => command(c).args[0] === "context-only"),
+      ).toHaveLength(1);
+      expect(calls.every((c) => !c.signal.aborted)).toBe(true);
+      expect(readFileSync(rejected, "utf8")).toBe(before);
+      expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+        origin === "native"
+          ? "invalid-native-range"
+          : "invalid-existing-output",
+      );
+      const checkpoint = readFileSync(
+        join(directory, "candidate-progress.json"),
+        "utf8",
+      );
+      expect(checkpoint).not.toContain("test@example.com");
+      expect(checkpoint).not.toContain("private diagnostic");
+      calls.length = 0;
+      expect((await runCorpus(options, runner)).code).toBe(0);
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it.each([
+    {
+      enabled: false,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "invalid-native-range",
+    },
+    {
+      enabled: true,
+      native: true,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "out-of-scope-native-evidence",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 2,
+      error: "invalid-native-range",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "conflicting-batch-output",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "native-batch-input-mismatch",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "relevant-manifest-mismatch",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "native-initialization-failed",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "native-database-busy",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-native-batches.ts",
+      exit: 1,
+      error: "native-format-failed",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-codex-run.ts",
+      exit: 1,
+      error: "network-failure",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-codex-run.ts",
+      exit: 2,
+      error: "account-unavailable-or-changed",
+    },
+    {
+      enabled: true,
+      native: false,
+      script: "chat-codex-run.ts",
+      exit: 1,
+      error: "invalid-candidate-schema",
+    },
+  ])(
+    "quarantine preserves stopping for noneligible/default/native failures: %j",
+    async ({ enabled, native, script, exit, error }) => {
+      const { root, directory, packets } = fixture();
+      if (script !== "chat-codex-run.ts")
+        write(
+          packets[0].file.replace(".input.json", ".output.json"),
+          candidateOutput(packets[0].packetId),
+        );
+      if (native) {
+        write(
+          join(directory, "native", `${packets[0].packetId}.input.json`),
+          read(packets[0].file),
+        );
+        write(
+          join(directory, "native", `${packets[0].packetId}.output.json`),
+          candidateOutput(packets[0].packetId),
+        );
+      }
+      const calls: Launch[] = [];
+      const runner: Runner = async (launch) => {
+        calls.push(launch);
+        return { code: exit, errorCode: error };
+      };
+      const result = await runCorpus(
+        {
+          root,
+          phase: "candidate",
+          concurrency: 1,
+          quarantineInvalidCandidates: enabled,
+        },
+        runner,
+      );
+      expect(result.code).toBe(exit === 2 ? 2 : 1);
+      expect(calls).toHaveLength(1);
+      expect(command(calls[0]).script).toBe(script);
+      expect(command(calls[0]).args[0]).not.toBe("context-only");
+      if (native) expect(command(calls[0]).args[0]).toBe("import");
+      expect(result.progress.counts.imported).toBe(0);
+      if (error === "native-database-busy")
+        expect(result.progress.failures?.at(-1)?.errorCode).toBe(error);
+    },
+  );
+
+  it("a context-only conflict or positive receipt still stops bulk processing", async () => {
+    for (const conflict of [true, false]) {
+      const { root, packets } = fixture();
+      for (const p of packets)
+        write(
+          p.file.replace(".input.json", ".output.json"),
+          candidateOutput(p.packetId),
+        );
+      const calls: Launch[] = [];
+      const runner: Runner = async (launch) => {
+        calls.push(launch);
+        if (command(launch).args[0] === "context-only")
+          return conflict
+            ? { code: 1, errorCode: "conflicting-batch-output" }
+            : {
+                code: 0,
+                stdout: JSON.stringify({
+                  ...contextOnlyReceipt(),
+                  modelResultAccepted: true,
+                }),
+              };
+        return { code: 1, errorCode: "out-of-scope-native-evidence" };
+      };
+      const result = await runCorpus(
+        {
+          root,
+          phase: "candidate",
+          concurrency: 1,
+          quarantineInvalidCandidates: true,
+        },
+        runner,
+      );
+      expect(result.code).toBe(1);
+      expect(calls.map((c) => command(c).args[0])).toEqual([
+        "import-relevant",
+        "context-only",
+      ]);
+      expect(result.progress.counts.imported).toBe(0);
+      expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+        conflict ? "conflicting-batch-output" : "invalid-quarantine-receipt",
+      );
+    }
+  });
+
+  it("outer abort invokes the same Windows PID-tree helper and awaits its completion without spawn signal", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 4321,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => true),
+    }) as unknown as ChildProcess;
+    const spawn = vi.fn(() => child);
+    let completeStop!: () => void;
+    const execute = vi.fn((_command, _args, _options, done) => {
+      completeStop = () => done(null);
+    });
+    const stop = vi.fn((c) =>
+      stopCodexProcess(
+        c,
+        "win32",
+        execute as unknown as Parameters<typeof stopCodexProcess>[2],
+      ),
+    );
+    const controller = new AbortController();
+    const pending = createNodeRunner(
+      spawn as unknown as Parameters<typeof createNodeRunner>[0],
+      stop,
+    )({
+      executable: "synthetic",
+      args: [],
+      cwd: resolve("."),
+      signal: controller.signal,
+    });
+    controller.abort();
+    await Promise.resolve();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      "taskkill",
+      ["/PID", "4321", "/T", "/F"],
+      { windowsHide: true },
+      expect.any(Function),
+    );
+    expect(spawn.mock.calls[0]).toHaveLength(3);
+    expect((spawn.mock.calls[0] as unknown[])[2]).not.toHaveProperty("signal");
+    let finished = false;
+    void pending.then(() => {
+      finished = true;
+    });
+    child.emit("close", 0);
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    completeStop();
+    expect(await pending).toMatchObject({
+      code: 1,
+      errorCode: "runner-aborted",
+    });
+    expect(child.kill).not.toHaveBeenCalled();
+    controller.abort();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("outer abort never targets an unknown PID and safely reports a failed tree stop", async () => {
+    for (const pid of [undefined, 0, -1, 1.5, 4321]) {
+      const child = Object.assign(new EventEmitter(), {
+        pid,
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: vi.fn(() => true),
+      }) as unknown as ChildProcess;
+      const spawn = vi.fn(() => child);
+      const stop = vi.fn(async () => {
+        throw new Error("private process details");
+      });
+      const controller = new AbortController();
+      const pending = createNodeRunner(
+        spawn as unknown as Parameters<typeof createNodeRunner>[0],
+        stop,
+      )({
+        executable: "synthetic",
+        args: [],
+        cwd: resolve("."),
+        signal: controller.signal,
+      });
+      controller.abort();
+      const result = await pending;
+      expect(stop).toHaveBeenCalledTimes(pid === 4321 ? 1 : 0);
+      expect(result).toMatchObject({
+        code: 1,
+        errorCode:
+          pid === 4321 ? "codex-process-tree-stop-failed" : "runner-aborted",
+      });
+      expect(JSON.stringify(result)).not.toContain("private process details");
+      expect(child.kill).not.toHaveBeenCalled();
+    }
+    const controller = new AbortController();
+    controller.abort();
+    const spawn = vi.fn();
+    const stop = vi.fn();
+    expect(
+      await createNodeRunner(
+        spawn,
+        stop,
+      )({
+        executable: "synthetic",
+        args: [],
+        cwd: resolve("."),
+        signal: controller.signal,
+      }),
+    ).toMatchObject({ code: 1, errorCode: "runner-aborted" });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
   it("prepares schemas from tracked templates without private data from an earlier run", async () => {
     const { root, directory } = fixture(1);
     for (const mode of ["candidate", "draft", "review"])
       rmSync(join(directory, "schemas", `${mode}.schema.json`));
-    const result = await runCorpus({ phase: "candidate", concurrency: 1, root }, candidateRunner([]));
+    const result = await runCorpus(
+      { phase: "candidate", concurrency: 1, root },
+      candidateRunner([]),
+    );
     expect(result.code).toBe(0);
     expect(read(join(directory, "schemas/candidate.schema.json"))).toEqual(
-      read(join(root, "src/server/chat-pipeline/schemas/candidate.schema.json")),
+      read(
+        join(root, "src/server/chat-pipeline/schemas/candidate.schema.json"),
+      ),
     );
   });
   it("launches Node with literal argv without shell expansion", async () => {
@@ -123,7 +597,26 @@ describe("corpus orchestration boundaries", () => {
     expect(JSON.parse(result.stdout ?? "")).toBe(literal);
   });
   it("parses bounded concurrency, packet pilot and explicit publish-only env option", () => {
+    expect(
+      parseOptions(["candidate", "--separate-candidate-progress"])
+        .separateCandidateProgress,
+    ).toBe(true);
+    expect(() =>
+      parseOptions(["draft", "--separate-candidate-progress"]),
+    ).toThrow("invalid-argument");
     expect(parseOptions(["all"])).toEqual({ phase: "all", concurrency: 2 });
+    expect(
+      parseOptions([
+        "candidate",
+        "--repair-relevant",
+        "--quarantine-invalid-candidates",
+        "--separate-candidate-progress",
+      ]),
+    ).toMatchObject({
+      repairRelevant: true,
+      quarantineInvalidCandidates: true,
+      separateCandidateProgress: true,
+    });
     expect(
       parseOptions([
         "publish",
@@ -402,6 +895,69 @@ describe("corpus orchestration boundaries", () => {
     ).toEqual({ complete: false });
   });
 
+  it.each([
+    { repair: true, native: false, kind: "partial", passed: true },
+    { repair: false, native: false, kind: "partial", passed: false },
+    { repair: true, native: true, kind: "partial", passed: false },
+    { repair: true, native: false, kind: "empty", passed: false },
+    { repair: true, native: false, kind: "duplicate", passed: false },
+    { repair: true, native: false, kind: "foreign", passed: false },
+    { repair: true, native: false, kind: "packet", passed: false },
+  ])(
+    "candidate scope permits only a nonempty unique subset for relevant repair: %j",
+    async ({ repair, native, kind, passed }) => {
+      const { root, directory, packets } = fixture(1);
+      const blocks = Array.from({ length: 6 }, (_, i) => ({
+        batchId: id(10 + i),
+        messages: [[0, "synthetic", "합성 분석", []]],
+      }));
+      const source = { packetId: packets[0].packetId, blocks };
+      const output = {
+        packetId: kind === "packet" ? id(99) : source.packetId,
+        complete: true,
+        blocks: blocks.slice(0, 5).map((b) => ({
+          batchId: b.batchId,
+          candidates: [],
+          noncandidateRanges: [[0, 0]],
+          contextIds: [],
+        })),
+      };
+      if (kind === "empty") output.blocks = [];
+      if (kind === "duplicate") output.blocks[4] = { ...output.blocks[0] };
+      if (kind === "foreign") output.blocks[4].batchId = id(99);
+      write(packets[0].file, source);
+      const inputPath = native
+        ? join(directory, "native", `${source.packetId}.input.json`)
+        : packets[0].file;
+      const outputPath = inputPath.replace(".input.json", ".output.json");
+      write(inputPath, source);
+      write(outputPath, output);
+      const before = readFileSync(outputPath, "utf8");
+      const calls: Launch[] = [];
+      const result = await runCorpus(
+        { root, phase: "candidate", concurrency: 1, repairRelevant: repair },
+        candidateRunner(calls),
+      );
+      expect(result.code).toBe(passed ? 0 : 1);
+      expect(readFileSync(outputPath, "utf8")).toBe(before);
+      expect(calls.map((c) => [command(c).script, command(c).args[0]])).toEqual(
+        passed ? [["chat-native-batches.ts", "repair-relevant"]] : [],
+      );
+      if (passed) {
+        expect(result.progress.counts).toMatchObject({
+          needsContext: 3,
+          needsContextCandidates: 1,
+        });
+        expect(
+          Object.values(result.progress.steps).some((r) => r.count === 5),
+        ).toBe(true);
+      } else
+        expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+          "output-scope-mismatch",
+        );
+    },
+  );
+
   it("rejects schema-valid wrong packet scope without importing or overwriting", async () => {
     const { root, packets } = fixture(1);
     write(
@@ -459,10 +1015,13 @@ describe("corpus orchestration boundaries", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("caps active model calls at four", async () => {
+  it("keeps four model calls parallel while serializing native repair/import and quarantine writes", async () => {
     const { root } = fixture(8);
     let active = 0,
-      maximum = 0;
+      maximum = 0,
+      nativeActive = 0,
+      nativeMaximum = 0,
+      quarantines = 0;
     const runner: Runner = async (launch) => {
       const { script, args } = command(launch);
       if (script === "chat-codex-run.ts") {
@@ -470,14 +1029,90 @@ describe("corpus orchestration boundaries", () => {
         await new Promise((done) => setTimeout(done, 5));
         write(args[2], candidateOutput(read(args[1]).packetId));
         active--;
+      } else if (script === "chat-native-batches.ts") {
+        nativeMaximum = Math.max(nativeMaximum, ++nativeActive);
+        await new Promise((done) => setTimeout(done, 5));
+        nativeActive--;
+        if (args[0] === "context-only") {
+          quarantines++;
+          return { code: 0, stdout: JSON.stringify(contextOnlyReceipt()) };
+        }
+        if (read(args[1]).packetId === id(1))
+          return { code: 1, errorCode: "invalid-native-range" };
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            repaired: true,
+            repairCounts: {
+              needsContextMessages: 0,
+              needsContextCandidates: 0,
+            },
+          }),
+        };
       }
       return { code: 0 };
     };
-    expect(
-      (await runCorpus({ root, phase: "candidate", concurrency: 4 }, runner))
-        .code,
-    ).toBe(0);
+    const result = await runCorpus(
+      {
+        root,
+        phase: "candidate",
+        concurrency: 4,
+        repairRelevant: true,
+        quarantineInvalidCandidates: true,
+      },
+      runner,
+    );
+    expect(result.code).toBe(0);
     expect(maximum).toBe(4);
+    expect(nativeMaximum).toBe(1);
+    expect(quarantines).toBe(1);
+    expect(result.progress.counts).toMatchObject({
+      imported: 8,
+      quarantinedPackets: 1,
+    });
+  });
+
+  it("a database failure stops queued imports without quarantining or launching another child", async () => {
+    const { root, packets } = fixture(4);
+    for (const packet of packets)
+      write(
+        packet.file.replace(".input.json", ".output.json"),
+        candidateOutput(packet.packetId),
+      );
+    const calls: Launch[] = [];
+    const runner: Runner = async (launch) => {
+      calls.push(launch);
+      await new Promise((done) => setTimeout(done, 5));
+      return { code: 1, errorCode: "native-database-busy" };
+    };
+    const result = await runCorpus(
+      {
+        root,
+        phase: "candidate",
+        concurrency: 4,
+        repairRelevant: true,
+        quarantineInvalidCandidates: true,
+      },
+      runner,
+    );
+    expect(result.code).toBe(1);
+    expect(calls.map(command)).toHaveLength(1);
+    expect(command(calls[0])).toMatchObject({
+      script: "chat-native-batches.ts",
+      args: ["repair-relevant", expect.any(String)],
+    });
+    expect(result.progress.failures).toEqual([
+      {
+        script: "chat-native-batches.ts",
+        exitCode: 1,
+        errorCode: "native-database-busy",
+      },
+    ]);
+    expect(result.progress.counts.imported).toBe(0);
+    for (const packet of packets)
+      expect(read(packet.file.replace(".input.json", ".output.json"))).toEqual(
+        candidateOutput(packet.packetId),
+      );
   });
 
   it.each([false, true])(

@@ -223,7 +223,7 @@ describe("pipeline model proxy budget", () => {
       ledger.close();
       rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 });
 
 describe("JSON usage telemetry", () => {

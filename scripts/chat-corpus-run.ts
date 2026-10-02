@@ -10,6 +10,8 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { stopCodexProcess } from "../src/server/chat-pipeline/relative-context";
+import { quarantineValidationCodes } from "./chat-native-batches";
 
 type Json = Record<string, any>;
 type Phase = "candidate" | "draft" | "publish" | "all";
@@ -28,6 +30,8 @@ export type Options = {
   limitPackets?: number;
   publishEnvFile?: boolean;
   repairRelevant?: boolean;
+  separateCandidateProgress?: boolean;
+  quarantineInvalidCandidates?: boolean;
   root?: string;
 };
 type Receipt = {
@@ -37,6 +41,7 @@ type Receipt = {
   held?: number;
   needsContext?: number;
   needsContextCandidates?: number;
+  quarantined?: boolean;
 };
 type Progress = {
   version: 1;
@@ -49,6 +54,7 @@ type Progress = {
     held: number;
     needsContext?: number;
     needsContextCandidates?: number;
+    quarantinedPackets?: number;
   };
 };
 const digest = (value: unknown) =>
@@ -65,6 +71,8 @@ const failureScripts = new Set([
 // Only fixed diagnostic labels leave child output; arbitrary a-z text is not safe.
 const failureCodes = new Set([
   "runner-failed",
+  "runner-aborted",
+  "codex-process-tree-stop-failed",
   "corpus-step-failed",
   "account-unavailable-or-changed",
   "batch-proxy-budget-boundary",
@@ -102,6 +110,7 @@ const failureCodes = new Set([
   "relevant-input-mismatch",
   "repair-artifact-conflict",
   "repair-source-path-conflict",
+  "native-database-busy",
   "native-format-failed",
   "native-initialization-failed",
   "conflicting-message-disposition",
@@ -132,6 +141,12 @@ const failureCodes = new Set([
   "missing-review-output",
   "incomplete-publication",
   "stopped",
+  "conflicting-batch-output",
+  "invalid-output-envelope",
+  "quarantine-requires-invalid-output",
+  "quarantine-source-path-mismatch",
+  "quarantine-artifact-conflict",
+  "invalid-quarantine-receipt",
 ]);
 const safeCode = (value: unknown): string | undefined =>
   typeof value === "string" &&
@@ -146,35 +161,82 @@ function diagnosticCode(text: string): string | undefined {
   }
 }
 
-// No shell, raw child diagnostics, helper imports, or credential reads here.
-export const nodeRunner: Runner = ({ executable, args, cwd, signal }) =>
-  new Promise((done) => {
-    const child = spawn(executable, args, {
-      cwd,
-      signal,
-      windowsHide: true,
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+// No shell, raw child diagnostics, or credential reads here.
+export const createNodeRunner =
+  (spawnChild = spawn, stopChild = stopCodexProcess): Runner =>
+  ({ executable, args, cwd, signal }) =>
+    new Promise((done) => {
+      if (signal.aborted) {
+        done({ code: 1, errorCode: "runner-aborted" });
+        return;
+      }
+      const child = spawnChild(executable, args, {
+        cwd,
+        windowsHide: true,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      let exited = false,
+        settled = false,
+        aborted = false,
+        stopFailed = false;
+      let pendingStop: Promise<void> | undefined;
+      const finish = async (exitCode: number, errorCode?: string) => {
+        if (settled) return;
+        settled = true;
+        exited = true;
+        signal.removeEventListener("abort", abort);
+        await pendingStop;
+        const code = aborted ? 1 : exitCode;
+        done({
+          code,
+          stdout,
+          ...(code !== 0
+            ? {
+                errorCode: stopFailed
+                  ? "codex-process-tree-stop-failed"
+                  : aborted
+                    ? "runner-aborted"
+                    : (safeCode(errorCode) ??
+                      diagnosticCode(stderr) ??
+                      diagnosticCode(stdout)),
+              }
+            : {}),
+        });
+      };
+      const abort = () => {
+        if (exited || pendingStop) return;
+        aborted = true;
+        if (!Number.isSafeInteger(child.pid) || !child.pid || child.pid <= 0) {
+          void finish(1, "runner-aborted");
+          return;
+        }
+        // Stop the known PID tree, not just the Node wrapper via spawn's signal.
+        pendingStop = Promise.resolve()
+          .then(() => stopChild(child))
+          .catch(() => {
+            stopFailed = true;
+            void finish(1, "codex-process-tree-stop-failed");
+          });
+      };
+      child.stdout.on("data", (chunk) => {
+        stdout = (stdout + String(chunk)).slice(-65536);
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr = (stderr + String(chunk)).slice(-65536);
+      });
+      child.on("error", () => {
+        void finish(1, "runner-failed");
+      });
+      child.on("close", (code) => {
+        void finish(code ?? 1);
+      });
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout = (stdout + String(chunk)).slice(-65536);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr = (stderr + String(chunk)).slice(-65536);
-    });
-    child.on("error", () => done({ code: 1, errorCode: "runner-failed" }));
-    child.on("close", (code) =>
-      done({
-        code: code ?? 1,
-        stdout,
-        ...(code !== 0
-          ? { errorCode: diagnosticCode(stderr) ?? diagnosticCode(stdout) }
-          : {}),
-      }),
-    );
-  });
+export const nodeRunner: Runner = createNodeRunner();
 
 export function parseOptions(args: string[]): Options {
   const phase = args[0] as Phase;
@@ -184,6 +246,13 @@ export function parseOptions(args: string[]): Options {
   for (let i = 1; i < args.length; i++) {
     if (args[i] === "--publish-env-file") options.publishEnvFile = true;
     else if (args[i] === "--repair-relevant") options.repairRelevant = true;
+    else if (args[i] === "--quarantine-invalid-candidates")
+      options.quarantineInvalidCandidates = true;
+    else if (
+      args[i] === "--separate-candidate-progress" &&
+      phase === "candidate"
+    )
+      options.separateCandidateProgress = true;
     else if (args[i] === "--concurrency" || args[i] === "--limit-packets") {
       const key = args[i] === "--concurrency" ? "concurrency" : "limitPackets";
       const value = Number(args[++i]);
@@ -279,7 +348,12 @@ export async function runCorpus(
         local,
       );
   }
-  const progressPath = join(directory, "corpus-progress.json");
+  const progressPath = join(
+    directory,
+    options.separateCandidateProgress
+      ? "candidate-progress.json"
+      : "corpus-progress.json",
+  );
   const progress: Progress = existsSync(progressPath)
     ? (read(progressPath) as Progress)
     : {
@@ -321,6 +395,7 @@ export async function runCorpus(
             "held",
             "needsContext",
             "needsContextCandidates",
+            "quarantined",
           ].includes(k),
       ) ||
       ![
@@ -329,7 +404,9 @@ export async function runCorpus(
         receipt.held ?? 0,
         receipt.needsContext ?? 0,
         receipt.needsContextCandidates ?? 0,
-      ].every((n) => Number.isSafeInteger(n) && n >= 0)
+      ].every((n) => Number.isSafeInteger(n) && n >= 0) ||
+      (receipt.quarantined !== undefined &&
+        typeof receipt.quarantined !== "boolean")
     )
       throw new Error("invalid-checkpoint");
   }
@@ -364,6 +441,12 @@ export async function runCorpus(
         .reduce((n, [, r]) => n + r.count, 0),
       published: receipts.reduce((n, [, r]) => n + (r.published ?? 0), 0),
       held: receipts.reduce((n, [, r]) => n + (r.held ?? 0), 0),
+      ...(receipts.some(([, r]) => r.quarantined)
+        ? {
+            quarantinedPackets: receipts.filter(([, r]) => r.quarantined)
+              .length,
+          }
+        : {}),
       ...(receipts.some(([, r]) => r.needsContext !== undefined)
         ? {
             needsContext: receipts.reduce(
@@ -382,7 +465,12 @@ export async function runCorpus(
     writeFileSync(temp, JSON.stringify(progress), { mode: 0o600 });
     renameSync(temp, progressPath);
   };
-  const invoke = async (script: string, args: string[], publish = false) => {
+  const invokeChild = async (
+    script: string,
+    args: string[],
+    publish = false,
+    recoverOutputValidation = false,
+  ) => {
     if (code) throw new Error("stopped");
     let result: Awaited<ReturnType<Runner>>;
     try {
@@ -409,29 +497,62 @@ export async function runCorpus(
       throw new Error("child-failed");
     }
     if (result.code !== 0) {
-      fail(
-        script,
-        result.code,
-        safeCode(result.errorCode) ?? diagnosticCode(result.stdout ?? ""),
-      );
+      const errorCode =
+        safeCode(result.errorCode) ?? diagnosticCode(result.stdout ?? "");
+      if (
+        !code &&
+        recoverOutputValidation &&
+        script === "chat-native-batches.ts" &&
+        result.code === 1 &&
+        errorCode &&
+        quarantineValidationCodes.has(errorCode)
+      ) {
+        recordFailure(script, 1, errorCode);
+        throw new Error(errorCode);
+      }
+      fail(script, result.code, errorCode);
       throw new Error("child-failed");
     }
     if (code) throw new Error("stopped");
     return result.stdout ?? "";
   };
-  const fail = (script: string, exitCode: number, errorCode?: string) => {
-    if (code) return;
-    const exit = Number.isSafeInteger(exitCode) && exitCode > 0 ? exitCode : 1;
+  // Keep model calls parallel, but do not overlap native CLI transactions on
+  // the same DELETE-journal SQLite store. Lock promotion can fail immediately.
+  let nativeTail: Promise<unknown> = Promise.resolve();
+  const invoke = (
+    script: string,
+    args: string[],
+    publish = false,
+    recoverOutputValidation = false,
+  ) => {
+    if (script !== "chat-native-batches.ts")
+      return invokeChild(script, args, publish, recoverOutputValidation);
+    const pending = nativeTail.then(() =>
+      invokeChild(script, args, publish, recoverOutputValidation),
+    );
+    nativeTail = pending.catch(() => {});
+    return pending;
+  };
+  const recordFailure = (
+    script: string,
+    exitCode: number,
+    errorCode?: string,
+  ) => {
     progress.failures = [
       ...(progress.failures ?? []),
       {
         script: basename(script),
-        exitCode: exit,
+        exitCode,
         ...(safeCode(errorCode) ? { errorCode: safeCode(errorCode) } : {}),
       },
     ].slice(-20);
-    stop(exit);
     checkpoint();
+  };
+  const fail = (script: string, exitCode: number, errorCode?: string) => {
+    if (code) return;
+    const exit = Number.isSafeInteger(exitCode) && exitCode > 0 ? exitCode : 1;
+    stop(exit);
+    recordFailure(script, exit, errorCode);
   };
   const packets = (path: string) => {
     const manifest = read(path);
@@ -472,6 +593,7 @@ export async function runCorpus(
     mode: "candidate" | "draft" | "review",
     input: string,
     output: string,
+    allowCandidateSubset = false,
   ) => {
     const source = read(input);
     const schema = join(directory, "schemas", `${mode}.schema.json`);
@@ -499,9 +621,14 @@ export async function runCorpus(
       (e: Json) => e[key],
     );
     if (
-      expected.length !== actual.length ||
+      (allowCandidateSubset && mode === "candidate"
+        ? actual.length < 1
+        : expected.length !== actual.length) ||
+      new Set(expected).size !== expected.length ||
       new Set(actual).size !== actual.length ||
-      expected.some((k: string) => !actual.includes(k)) ||
+      actual.some(
+        (k: string) => typeof k !== "string" || !expected.includes(k),
+      ) ||
       (mode === "candidate" && result.packetId !== source.packetId)
     )
       throw new Error("output-scope-mismatch");
@@ -570,44 +697,107 @@ export async function runCorpus(
           const output = original
             ? nativeOutput
             : join(dirname(input), `${packet.packetId}.output.json`);
-          // Candidate generation may run once; the repair/import helper never calls models.
-          await model("candidate", input, output);
-          const hash = digest([
-            read(input),
-            read(output),
-            original,
-            ...(repair ? ["repair-relevant-v1"] : []),
-          ]);
+          const quarantine =
+            !original && options.quarantineInvalidCandidates === true;
           const key = `import:${packet.packetId}`;
-          if (progress.steps[key]?.hash !== hash) {
-            const stdout = await invoke("chat-native-batches.ts", [
-              original
-                ? "import"
-                : repair
-                  ? "repair-relevant"
-                  : "import-relevant",
-              output,
+          const importHash = () =>
+            digest([
+              read(input),
+              read(output),
+              original,
+              ...(repair ? ["repair-relevant-v1"] : []),
             ]);
-            const repaired = repair ? lastJson(stdout) : undefined;
+          if (
+            quarantine &&
+            existsSync(output) &&
+            progress.steps[key]?.quarantined &&
+            progress.steps[key].hash === importHash()
+          )
+            return;
+          let helperAttempted = false;
+          try {
+            // Candidate generation may run once; the repair/import helper never calls models.
+            await model("candidate", input, output, repair);
+            const hash = digest([
+              read(input),
+              read(output),
+              original,
+              ...(repair ? ["repair-relevant-v1"] : []),
+            ]);
+            if (progress.steps[key]?.hash !== hash) {
+              helperAttempted = true;
+              const stdout = await invoke(
+                "chat-native-batches.ts",
+                [
+                  original
+                    ? "import"
+                    : repair
+                      ? "repair-relevant"
+                      : "import-relevant",
+                  output,
+                ],
+                false,
+                quarantine,
+              );
+              const repaired = repair ? lastJson(stdout) : undefined;
+              if (
+                repair &&
+                (repaired?.repaired !== true ||
+                  ![
+                    repaired.repairCounts?.needsContextMessages,
+                    repaired.repairCounts?.needsContextCandidates,
+                  ].every((n) => Number.isSafeInteger(n) && n >= 0))
+              )
+                throw new Error("invalid-repair-receipt");
+              progress.steps[key] = {
+                hash,
+                count: read(output).blocks.length,
+                ...(repair
+                  ? {
+                      needsContext: repaired!.repairCounts.needsContextMessages,
+                      needsContextCandidates:
+                        repaired!.repairCounts.needsContextCandidates,
+                    }
+                  : {}),
+              };
+              checkpoint();
+            }
+          } catch (error) {
             if (
-              repair &&
-              (repaired?.repaired !== true ||
-                ![
-                  repaired.repairCounts?.needsContextMessages,
-                  repaired.repairCounts?.needsContextCandidates,
-                ].every((n) => Number.isSafeInteger(n) && n >= 0))
+              code ||
+              !quarantine ||
+              !(error instanceof Error) ||
+              (!quarantineValidationCodes.has(error.message) &&
+                !(!helperAttempted && error.message === "incomplete-output")) ||
+              !existsSync(output)
             )
-              throw new Error("invalid-repair-receipt");
+              throw error;
+            if (!helperAttempted)
+              recordFailure("chat-corpus-run.ts", 1, error.message);
+            const result = lastJson(
+              await invoke("chat-native-batches.ts", ["context-only", output]),
+            );
+            if (
+              result.quarantined !== true ||
+              result.modelResultAccepted !== false ||
+              result.fullMeaningComplete !== false ||
+              result.source !== "deterministic-quarantine" ||
+              result.importedCandidates !== 0 ||
+              result.contextCounts?.candidates !== 0 ||
+              result.contextCounts?.noncandidate !== 0 ||
+              result.contextCounts?.needsContextCandidates !== 0 ||
+              ![
+                result.importedBatches,
+                result.contextCounts?.needsContextMessages,
+              ].every((n) => Number.isSafeInteger(n) && n >= 0)
+            )
+              throw new Error("invalid-quarantine-receipt");
             progress.steps[key] = {
-              hash,
-              count: read(output).blocks.length,
-              ...(repair
-                ? {
-                    needsContext: repaired!.repairCounts.needsContextMessages,
-                    needsContextCandidates:
-                      repaired!.repairCounts.needsContextCandidates,
-                  }
-                : {}),
+              hash: importHash(),
+              count: result.importedBatches,
+              quarantined: true,
+              needsContext: result.contextCounts.needsContextMessages,
+              needsContextCandidates: 0,
             };
             checkpoint();
           }

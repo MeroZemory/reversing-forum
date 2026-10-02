@@ -64,7 +64,8 @@ type DraftInput = {
 
 const processingRecord = join(directory, "processing-record.json");
 const instruction =
-  "전체 후보를 각각 검토하고 공개용 편집 글로 독립적으로 다시 작성하세요. 원문 문장·고유한 코드·표현·개인 경험·닉네임을 복사하지 마세요. 질문의 논점, 제안된 방법, 반박, 해결 여부와 미확인 사항을 명확히 구분하세요. 기록에 없는 성공·동의·인물·첨부 내용을 만들지 마세요. 현재 기술적 사실을 새로 검증한 것처럼 쓰지 말고 기록 당시 제안임을 밝히세요. 필요한 답변이나 맥락이 없으면 ready:false로 남기세요. 단순 도구 이름 나열이나 불완전한 질문으로 글 수를 늘리지 마세요. 질문과 응답이 이어지고 학습에 쓸 논점이 있으면 당시 제안이 틀려도 후보가 될 수 있습니다. 게임 치트 제작·배포·판매, 특정 서비스의 접근통제 우회 실행법·도구 배포는 보류하세요. 일반적인 디버깅·운영체제·보안 연구 개념은 자체 작성한 설명으로 다룰 수 있습니다. 실행 코드나 원본 URL을 옮기지 마세요. title은 검색 가능한 구체적인 논점, body는 독자가 바로 이해할 수 있는 한국어 Markdown, tags는 주제·도구 1~4개입니다. 일본어·한자를 쓰지 마세요. 근거 id와 발언자 별칭은 본문에 넣지 마세요. 입력에 있는 모든 candidateKey마다 결과를 하나 반환하고 complete는 실제 전체 처리 여부입니다.";
+  "전체 후보를 각각 검토하고 공개용 편집 글로 독립적으로 다시 작성하세요. 원문 문장·고유한 코드·표현·개인 경험·닉네임을 복사하지 마세요. 질문의 논점, 제안된 방법, 반박, 해결 여부와 미확인 사항을 구분하세요. 기록에 없는 성공·동의·인물·첨부 내용을 만들지 마세요. 현재 기술적 사실을 새로 검증한 것처럼 쓰지 말고 당시 제안임을 밝히세요. 질문과 응답에서 남길 만한 기술 논점이 있으면 짧거나 틀린 답변, 부분 답변, 해결 결과 미확인, 근거 미제시를 이유로 자동 보류하지 마세요. 확인된 대화 내용만 설명하고 미확인 범위를 표시하세요. 여러 항목 중 일부만 답변됐으면 답변된 논점부터 정리하세요. 누락 첨부 자체만으로 보류하지 말고 텍스트만으로 남길 정보를 대조하세요. 도구 선택의 이유와 견해 차이, 학습 방법도 유용한 정보입니다. 질문·응답 관계를 파악할 수 없거나 실제로 남길 논점이 없는 경우에 ready:false로 남기세요. 답변 없는 단편 질문과 단순 이름 나열로 글 수를 늘리지 마세요. 실제 게임의 무허가 부정사용 도구 제작·배포·판매와 특정 서비스의 접근통제 우회 실행법·도구 배포 안내는 보류하세요. 공격 원리의 개념 설명, 방어·탐지·분석 관점과 승인된 연습 문제의 디버깅 개념은 독립 서술할 수 있습니다. 위험한 행위로 이어질 가능성만으로 일반적인 분석 개념을 전부 보류하지 마세요. 실행 코드나 원본 URL을 옮기지 마세요. title은 검색 가능한 구체적인 논점, body는 독자가 바로 이해할 수 있는 한국어 Markdown, tags는 주제·도구 1~4개입니다. 일본어·한자를 쓰지 마세요. 근거 id와 발언자 별칭은 본문에 넣지 마세요. 입력에 있는 모든 candidateKey마다 결과를 하나 반환하고 complete는 실제 전체 처리 여부입니다.";
+const promptVersion = "editorial-qa-partial-v2";
 
 async function main() {
   const command = process.argv[2];
@@ -95,9 +96,14 @@ async function main() {
       const packets: { packetId: string; input: string; output: string }[] = [];
       for (let start = 0; start < entries.length; start += 20) {
         const selected = entries.slice(start, start + 20);
-        const packetId = digest(selected);
+        const packetId = digest({
+          promptVersion,
+          instruction,
+          entries: selected,
+        });
         const input = write(`${packetId}.draft.input.json`, {
           packetId,
+          promptVersion,
           instructions:
             instruction +
             " evidence는 로컬 원본 순서로 정렬했고 segment 숫자가 바뀌면 대화 구간이 달라집니다. 같은 구간도 질문·응답 관계를 보증하지 않으므로 논점과 응답 대상을 직접 대조하세요. [링크 제거]는 최소화 과정에서 주소를 제외했다는 표시입니다. 원본에 주소가 없었다거나 주소가 유실됐다고 쓰지 마세요.",

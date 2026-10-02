@@ -19,6 +19,7 @@ export function editorialEvidence(
   const query = db.prepare(`SELECT position,
     json_extract(record,'$.message.timestamp.local') AS local,
     json_extract(record,'$.message.sourceId') AS sourceId,
+    json_extract(record,'$.message.author') AS author,
     json_extract(record,'$.message.order') AS messageOrder
     FROM ledger WHERE run_id=(SELECT id FROM runs WHERE active=1) AND id=?`);
   const selected = [...new Set(ids)]
@@ -29,6 +30,7 @@ export function editorialEvidence(
             position: number;
             local: unknown;
             sourceId: unknown;
+            author: unknown;
             messageOrder: unknown;
           }
         | undefined;
@@ -49,10 +51,17 @@ export function editorialEvidence(
     ),
   );
   let segment = -1;
-  const evidence = selected.map(({ evidence: value }, index) => {
+  const speakers = new Map<string, string>();
+  const evidence = selected.map(({ evidence: value, chronology }, index) => {
     if (starts.has(index)) segment++;
-    const { id, speaker, text, attachmentMissing, duplicateAmbiguous, held } =
-      value;
+    const { id, text, attachmentMissing, duplicateAmbiguous, held } = value;
+    // Aliases in prepared batches are reused. Scope fresh labels to this candidate;
+    // nickname changes never establish that two identities are the same person.
+    const privateAuthor =
+      typeof chronology.author === "string" ? chronology.author : id;
+    if (!speakers.has(privateAuthor))
+      speakers.set(privateAuthor, `발언자${speakers.size + 1}`);
+    const speaker = speakers.get(privateAuthor)!;
     return {
       id,
       speaker,

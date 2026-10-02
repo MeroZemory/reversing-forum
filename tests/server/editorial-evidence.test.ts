@@ -16,6 +16,7 @@ function fixture() {
     position: number,
     local: string,
     source = "private-backup",
+    author = "비공개닉네임",
   ) {
     db.prepare("INSERT INTO ledger VALUES(?,?,?,?)").run(
       "active",
@@ -26,7 +27,7 @@ function fixture() {
           timestamp: { local },
           sourceId: source,
           order: position,
-          author: "비공개닉네임",
+          author,
           body: "원문비공개",
         },
       }),
@@ -79,6 +80,25 @@ describe("편집 근거의 순서와 구간", () => {
       minimized.get("q")!.held = true;
       expect(() => editorialEvidence(db, ["q"], minimized)).toThrow(
         "editorial-evidence-unavailable",
+      );
+    } finally {
+      db.close();
+    }
+  });
+  it("서로 다른 배치의 같은 임시 별칭을 실제 같은 발언자로 합치지 않는다", () => {
+    const { db, minimized, add } = fixture();
+    try {
+      add("q", 0, "2025-01-01T10:00", "private-backup", "원본작성자하나");
+      add("r", 1, "2025-01-01T10:01", "private-backup", "원본작성자둘");
+      add("follow", 2, "2025-01-01T10:02", "private-backup", "원본작성자하나");
+      const value = editorialEvidence(db, ["q", "r", "follow"], minimized);
+      expect(value.evidence.map((m) => m.speaker)).toEqual([
+        "발언자1",
+        "발언자2",
+        "발언자1",
+      ]);
+      expect(JSON.stringify(value)).not.toMatch(
+        /원본작성자|author|private-backup/,
       );
     } finally {
       db.close();

@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
 import {
   prepareChats,
   sanitizeText,
@@ -25,6 +26,9 @@ import { ChatJobStore } from "../../src/server/chat-pipeline/job-store";
 import {
   reconstructNativeOutputs,
   repairRelevantOutput,
+  contextOnlyNativeOutput,
+  nativeFailureCode,
+  quarantineValidationCodes,
 } from "../../scripts/chat-native-batches";
 import {
   parseOptions,
@@ -97,6 +101,85 @@ const input = (bodies: string[], id = "synthetic-a") => ({
   ),
 });
 const options: PrepareOptions = { maxMessages: 3, overlap: 1 };
+it("SQLite 잠금은 모델 오류로 격리하지 않고 안전하게 진단하며 잠금 해제 후 같은 결과를 보존한다", () => {
+  const store = open();
+  store.prepare(
+    [input(Array.from({ length: 60 }, (_, i) => `분석 메모 ${i}`))],
+    { maxMessages: 100, overlap: 1 },
+  );
+  const batch = store.listBatches()[0];
+  const evidence = batch.input.messages.slice(0, 2).map((m) => m.id);
+  const output = {
+    batchId: batch.batchId,
+    inputHash: batch.inputHash,
+    complete: true,
+    candidates: [
+      {
+        localId: "c1",
+        title: "합성 분석 질문",
+        topic: "분석",
+        questionIds: [evidence[0]],
+        responseIds: [evidence[1]],
+        uncertainties: [],
+        needsContext: false,
+      },
+    ],
+    dispositions: batch.input.messages
+      .filter((m) => !m.held && !evidence.includes(m.id))
+      .map((m) => ({
+        messageId: m.id,
+        kind: "needs-context",
+        reason: "모델분류미확인",
+      })),
+  };
+  const raw = JSON.stringify(output);
+  expect(validateBatchOutput(raw, batch)).toEqual(output);
+  const writer = (store as unknown as { db: Database.Database }).db;
+  writer.pragma("busy_timeout = 0");
+  const reader = new Database(join(store.directory, "jobs.sqlite"), {
+    readonly: true,
+    fileMustExist: true,
+  });
+  let failure: unknown;
+  try {
+    reader.exec("BEGIN");
+    reader.prepare("SELECT id FROM jobs").all();
+    try {
+      store.importResult(batch.batchId, raw, { summary: false });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ code: "SQLITE_BUSY" });
+    expect(nativeFailureCode(failure)).toBe("native-database-busy");
+    expect(quarantineValidationCodes.has(nativeFailureCode(failure))).toBe(
+      false,
+    );
+    expect(store.listBatches()[0].status).not.toBe("completed");
+    expect(
+      writer.prepare("SELECT COUNT(*) AS n FROM output_attempts").get(),
+    ).toEqual({ n: 0 });
+  } finally {
+    reader.close();
+  }
+  expect(store.importResult(batch.batchId, raw, { summary: false })).toEqual({
+    imported: 1,
+    replay: false,
+  });
+  expect(store.importResult(batch.batchId, raw, { summary: false })).toEqual({
+    imported: 0,
+    replay: true,
+  });
+  expect(nativeFailureCode(new TypeError("private diagnostic text"))).toBe(
+    "native-format-failed",
+  );
+  expect(
+    nativeFailureCode(
+      Object.assign(new Error("private diagnostic text"), {
+        code: "SQLITE_LOCKED",
+      }),
+    ),
+  ).toBe("native-database-busy");
+});
 it("오케스트레이터 repair opt-in은 기존 native hash를 유지하고 모델 호출 없이 context 추적한다", async () => {
   expect(parseOptions(["candidate", "--repair-relevant"])).toMatchObject({
     repairRelevant: true,
@@ -111,15 +194,16 @@ it("오케스트레이터 repair opt-in은 기존 native hash를 유지하고 �
   mkdirSync(join(data, "schemas"), { recursive: true });
   const write = (file: string, value: unknown) =>
     writeFileSync(file, JSON.stringify(value));
-  write(
-    join(data, "schemas/candidate.schema.json"),
-    JSON.parse(
-      readFileSync(
-        resolve("data/chat-pipeline/schemas/candidate.schema.json"),
-        "utf8",
+  for (const mode of ["candidate", "draft", "review"])
+    write(
+      join(data, "schemas", `${mode}.schema.json`),
+      JSON.parse(
+        readFileSync(
+          resolve("src/server/chat-pipeline/schemas", `${mode}.schema.json`),
+          "utf8",
+        ),
       ),
-    ),
-  );
+    );
   const ids = [1, 2, 3].map((n) => n.toString(16).padStart(64, "0"));
   const packets = ids.map((packetId) => ({
     packetId,
@@ -600,6 +684,304 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
     };
     return { batch, packet, triage, output };
   }
+
+  it("complete:false의 유효 후보 prefix도 채택하지 않고 전체 범위를 context로 보류한다", () => {
+    const { batch, packet, triage, output } = fixture();
+    const prefix = {
+      ...output,
+      complete: false,
+      blocks: [
+        {
+          ...output.blocks[0],
+          candidates: [
+            {
+              localId: "c1",
+              title: "합성 분석 질문",
+              topic: "분석",
+              questionIds: [20],
+              responseIds: [21],
+              uncertainties: [],
+              needsContext: false,
+            },
+          ],
+          noncandidateRanges: [],
+        },
+      ],
+    };
+    const raw = JSON.stringify(prefix);
+    expect(() =>
+      reconstructNativeOutputs(prefix, packet, [batch], triage),
+    ).toThrow("invalid-native-envelope");
+    expect(() => repairRelevantOutput(prefix, packet, [batch], triage)).toThrow(
+      "invalid-native-envelope",
+    );
+    const result = contextOnlyNativeOutput(
+      prefix,
+      packet,
+      [batch],
+      triage,
+      raw,
+    );
+    expect(JSON.stringify(prefix)).toBe(raw);
+    expect(result.report).toMatchObject({
+      source: "deterministic-quarantine",
+      modelResultAccepted: false,
+      fullMeaningComplete: false,
+      semanticReviewApproved: false,
+      validationCode: "invalid-native-envelope",
+      outputHash: hash(raw),
+      counts: {
+        candidates: 0,
+        noncandidate: 0,
+        needsContextCandidates: 0,
+        suppliedNonheld: 40,
+        needsContextMessages: 60,
+      },
+    });
+    expect(result.quarantined.complete).toBe(true);
+    expect(result.quarantined.blocks[0].candidates).toEqual([]);
+    expect(result.quarantined.blocks[0].noncandidateRanges).toEqual([]);
+    expect(result.prepared[0].candidates).toEqual([]);
+    expect(result.prepared[0].dispositions).toHaveLength(60);
+    expect(
+      result.prepared[0].dispositions!.every((d) => d.kind === "needs-context"),
+    ).toBe(true);
+    expect(
+      validateBatchOutput(JSON.stringify(result.prepared[0]), batch),
+    ).toEqual(result.prepared[0]);
+  });
+
+  it("context-only는 거부된 모델을 채택하지 않고 제외 범위까지 모든 nonheld를 비공개로 보관한다", () => {
+    const { batch, packet, triage, output } = fixture();
+    const invalid = {
+      ...output,
+      blocks: [{ ...output.blocks[0], noncandidateRanges: [[0, 59]] }],
+    };
+    const before = JSON.stringify(invalid);
+    expect(() =>
+      repairRelevantOutput(invalid, packet, [batch], triage),
+    ).toThrow("out-of-scope-native-evidence");
+    const result = contextOnlyNativeOutput(invalid, packet, [batch], triage);
+    expect(JSON.stringify(invalid)).toBe(before);
+    expect(result.report).toMatchObject({
+      version: 1,
+      source: "deterministic-quarantine",
+      modelResultAccepted: false,
+      fullMeaningComplete: false,
+      validationCode: "out-of-scope-native-evidence",
+      counts: {
+        candidates: 0,
+        noncandidate: 0,
+        suppliedNonheld: 40,
+        needsContextMessages: 60,
+      },
+    });
+    expect(result.prepared[0].candidates).toEqual([]);
+    expect(result.prepared[0].dispositions).toHaveLength(60);
+    expect(
+      result.prepared[0].dispositions!.every(
+        (d) =>
+          d.kind === "needs-context" && d.reason.startsWith("모델분류미확인"),
+      ),
+    ).toBe(true);
+    expect(result.quarantined.blocks[0].noncandidateRanges).toEqual([]);
+    expect(
+      validateBatchOutput(JSON.stringify(result.prepared[0]), batch),
+    ).toEqual(result.prepared[0]);
+    expect(() =>
+      contextOnlyNativeOutput(output, packet, [batch], triage),
+    ).toThrow("quarantine-requires-invalid-output");
+    expect(() =>
+      contextOnlyNativeOutput(
+        invalid,
+        packet,
+        [{ ...batch, inputHash: "wrong" }],
+        triage,
+      ),
+    ).toThrow("native-batch-input-mismatch");
+    expect(() =>
+      contextOnlyNativeOutput(
+        invalid,
+        { ...packet, packetId: "wrong" },
+        [batch],
+        triage,
+      ),
+    ).toThrow("native-input-hash-mismatch");
+    const privateCandidate = {
+      localId: "c1",
+      title: "test@example.com",
+      topic: "분석 도구",
+      questionIds: [25],
+      responseIds: [],
+      uncertainties: [],
+      needsContext: false,
+    };
+    const privateResult = contextOnlyNativeOutput(
+      {
+        ...output,
+        blocks: [{ ...output.blocks[0], candidates: [privateCandidate] }],
+      },
+      packet,
+      [batch],
+      triage,
+    );
+    expect(privateResult.report.validationCode).toBe(
+      "invalid-candidate-schema",
+    );
+    expect(JSON.stringify(privateResult)).not.toContain("test@example.com");
+    batch.input.messages[30].held = true;
+    packet.blocks[0].messages[30]![3] = ["held"];
+    packet.packetId = hash(packet.blocks);
+    triage.packetId = triage.inputHash = invalid.packetId = packet.packetId;
+    const held = contextOnlyNativeOutput(invalid, packet, [batch], triage);
+    expect(held.prepared[0].dispositions).toHaveLength(59);
+    expect(
+      held.prepared[0].dispositions!.some(
+        (d) => d.messageId === batch.input.messages[30].id,
+      ),
+    ).toBe(false);
+  });
+
+  it("repair는 누락 블록의 제공 nonheld 위치만 모델분류미확인으로 복구한다", () => {
+    const { batch, packet, triage, output } = fixture([
+      "candidate",
+      "candidate",
+      "candidate",
+    ]);
+    const missingBatch = prepareChats(
+      [
+        input(
+          Array.from({ length: 60 }, (_, i) =>
+            i === 30 ? "api_key=synthetic-secret" : `누락 블록 분석 ${i}`,
+          ),
+          "synthetic-missing",
+        ),
+      ],
+      { maxMessages: 100, overlap: 1 },
+    ).batches[0];
+    missingBatch.input.messages[30].held = true;
+    packet.blocks.push({
+      batchId: missingBatch.batchId,
+      inputHash: missingBatch.inputHash,
+      messages: missingBatch.input.messages.map((m, i) => [
+        i,
+        m.speaker,
+        m.text,
+        m.held ? ["held"] : [],
+      ]),
+    });
+    packet.packetId = hash(packet.blocks);
+    triage.packetId = triage.inputHash = output.packetId = packet.packetId;
+    triage.windows = prepareRequests(packet).windows.map((w) => ({
+      ...w,
+      label: "candidate",
+      source: "jev",
+      confidence: 0.99,
+      probability: 0.99,
+      cause: "classified",
+    }));
+    const candidate = {
+      localId: "c1",
+      title: "도구 분석 논점",
+      topic: "분석 도구",
+      questionIds: [5],
+      responseIds: [6],
+      uncertainties: [],
+      needsContext: false,
+    };
+    const value = {
+      ...output,
+      blocks: [
+        {
+          ...output.blocks[0],
+          candidates: [candidate],
+          noncandidateRanges: [
+            [0, 4],
+            [7, 59],
+          ],
+        },
+      ],
+    };
+    const before = JSON.stringify(value);
+    expect(() =>
+      reconstructNativeOutputs(value, packet, [batch, missingBatch], triage),
+    ).toThrow("out-of-scope-native-block");
+    const repair = repairRelevantOutput(
+      value,
+      packet,
+      [batch, missingBatch],
+      triage,
+    );
+    expect(JSON.stringify(value)).toBe(before);
+    expect(repair.report).toMatchObject({
+      missingBlocks: [missingBatch.batchId],
+      fullMeaningComplete: false,
+      lunaExaminedEntirePacket: false,
+      semanticReviewApproved: false,
+      counts: { missingBlocks: 1, missing: 59 },
+    });
+    const report = repair.report.blocks.find(
+      (b) => b.batchId === missingBatch.batchId,
+    )!;
+    const positions = Array.from({ length: 60 }, (_, i) => i).filter(
+      (i) => i !== 30,
+    );
+    expect(report.original).toBeNull();
+    expect(report.missingIds).toEqual(positions);
+    const result = repair.prepared.find(
+      (b) => b.batchId === missingBatch.batchId,
+    )!;
+    expect(result.candidates).toEqual([]);
+    expect(result.dispositions).toHaveLength(59);
+    expect(
+      result.dispositions!.every(
+        (d) => d.kind === "needs-context" && d.reason === "모델분류미확인",
+      ),
+    ).toBe(true);
+    expect(
+      result.dispositions!.some(
+        (d) => d.messageId === missingBatch.input.messages[30].id,
+      ),
+    ).toBe(false);
+    expect(
+      repair.repaired.blocks.find((b) => b.batchId === missingBatch.batchId),
+    ).toEqual({
+      batchId: missingBatch.batchId,
+      candidates: [],
+      noncandidateRanges: [],
+      contextIds: positions,
+    });
+    expect(
+      repair.prepared.find((b) => b.batchId === batch.batchId)!.candidates[0],
+    ).toMatchObject({ localId: "c1", needsContext: false });
+    expect(
+      reconstructNativeOutputs(
+        repair.repaired,
+        packet,
+        [batch, missingBatch],
+        triage,
+      ),
+    ).toHaveLength(2);
+    expect(validateBatchOutput(JSON.stringify(result), missingBatch)).toEqual(
+      result,
+    );
+    for (const blocks of [
+      [],
+      [value.blocks[0], value.blocks[0]],
+      [{ ...value.blocks[0], batchId: "foreign" }],
+      [{ ...value.blocks[0], extra: true }],
+      [{ ...value.blocks[0], candidates: "invalid" }],
+      [null],
+    ])
+      expect(() =>
+        repairRelevantOutput(
+          { ...value, blocks },
+          packet,
+          [batch, missingBatch],
+          triage,
+        ),
+      ).toThrow();
+  });
 
   it("repair는 충돌 후보·누락·held 후보 근거를 보수적으로 보존하고 원본은 바꾸지 않는다", () => {
     const { batch, packet, triage, output } = fixture();
@@ -1121,7 +1503,12 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
     ).toThrow();
   });
 
-  it.each(["import-relevant", "repair-relevant"])(
+  it.each([
+    "import-relevant",
+    "repair-relevant",
+    "context-only",
+    "context-only-conflict",
+  ])(
     "%s CLI가 로컬 manifest를 연결하고 재실행·범위 위조·덮어쓰기를 검증한다",
     (command) => {
       const { batch, packet, triage, output } = fixture();
@@ -1134,6 +1521,14 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
           [input(Array.from({ length: 60 }, (_, i) => `분석 메모 ${i}`))],
           { maxMessages: 100, overlap: 1 },
         );
+        if (command === "context-only-conflict")
+          store.importResult(
+            batch.batchId,
+            JSON.stringify(
+              reconstructNativeOutputs(output, packet, [batch], triage)[0],
+            ),
+            { summary: false },
+          );
       } finally {
         store.close();
       }
@@ -1166,6 +1561,10 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
       const inputFile = join(relevant, `${packet.packetId}.input.json`);
       write(inputFile, built.packet);
       const outputFile = join(relevant, `${packet.packetId}.output.json`);
+      const operation =
+        command === "context-only-conflict" ? "context-only" : command;
+      if (operation === "context-only")
+        output.blocks[0].noncandidateRanges = [[0, 59]];
       write(outputFile, output);
       const run = (...args: string[]) =>
         spawnSync(
@@ -1178,18 +1577,61 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
           ],
           { cwd: root, encoding: "utf8", timeout: 20_000 },
         );
-      const first = run(command, outputFile);
+      const first = run(operation, outputFile);
+      if (command === "context-only-conflict") {
+        expect(first.status).toBe(1);
+        expect(first.stderr).toContain("conflicting-batch-output");
+        expect(JSON.parse(run("summary").stdout)).toMatchObject({
+          messageDispositions: { noncandidate: 50, needsContext: 10 },
+        });
+        expect(readFileSync(outputFile, "utf8")).toBe(JSON.stringify(output));
+        return;
+      }
       expect(first.status, first.stderr).toBe(0);
       expect(JSON.parse(first.stdout)).toMatchObject({
         importedBatches: 1,
-        dispositionSources: { luna: 40, jev: 20 },
+        dispositionSources:
+          operation === "context-only"
+            ? { luna: 0, jev: 0 }
+            : { luna: 40, jev: 20 },
         lunaExaminedEntirePacket: false,
       });
       expect(JSON.parse(run("summary").stdout)).toMatchObject({
-        messageDispositions: { noncandidate: 50, needsContext: 10 },
+        messageDispositions:
+          operation === "context-only"
+            ? { noncandidate: 0, needsContext: 60 }
+            : { noncandidate: 50, needsContext: 10 },
       });
-      const replay = run(command, outputFile);
-      expect(replay.status, replay.stderr).toBe(0);
+      const replay = run(operation, outputFile);
+      expect(replay.status, replay.stderr).toBe(
+        operation === "context-only" ? 1 : 0,
+      );
+      if (operation === "context-only") {
+        const receipt = JSON.parse(first.stdout);
+        expect(receipt).toMatchObject({
+          quarantined: true,
+          modelResultAccepted: false,
+          fullMeaningComplete: false,
+          source: "deterministic-quarantine",
+          importedCandidates: 0,
+        });
+        expect(receipt.contextFile).not.toBe(outputFile);
+        expect(receipt.quarantineReportFile).toMatch(
+          /context-only-v1-[a-f0-9]{64}\.report\.json$/,
+        );
+        const report = JSON.parse(
+          readFileSync(receipt.quarantineReportFile, "utf8"),
+        );
+        expect(report).toMatchObject({
+          version: 1,
+          modelResultAccepted: false,
+          counts: { candidates: 0, noncandidate: 0, needsContextMessages: 60 },
+          outputHash: hash(readFileSync(outputFile, "utf8")),
+          sourceInputHash: hash(built.packet),
+        });
+        expect(readFileSync(outputFile, "utf8")).toBe(JSON.stringify(output));
+        expect(replay.stderr).toContain("conflicting-batch-output");
+      }
       if (command === "repair-relevant") {
         const receipt = JSON.parse(first.stdout);
         expect(receipt).toMatchObject({
@@ -1216,13 +1658,13 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
         JSON.parse(readFileSync(join(native, "manifest.json"), "utf8")),
       ).toEqual(manifest);
       write(inputFile, { ...built.packet, instructions: "tampered" });
-      expect(run(command, outputFile).stderr).toContain(
+      expect(run(operation, outputFile).stderr).toContain(
         "relevant-input-mismatch",
       );
       write(inputFile, built.packet);
       relevantManifest.packets[0].mapping[0].noncandidateRanges[0].end = 18;
       write(join(relevant, "manifest.json"), relevantManifest);
-      expect(run(command, outputFile).stderr).toContain(
+      expect(run(operation, outputFile).stderr).toContain(
         "relevant-manifest-mismatch",
       );
     },

@@ -1,4 +1,5 @@
 import { spawn, execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   readFileSync,
   mkdirSync,
@@ -12,6 +13,7 @@ import {
   candidateRelativeContext,
   codexPrompt,
   stopCodexProcess,
+  scopedOutputSchema,
 } from "../src/server/chat-pipeline/relative-context";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
@@ -68,7 +70,7 @@ const execute = promisify(execFile);
 async function activeAccount() {
   const { stdout } = await execute(
     process.execPath,
-    [ocxEntry, "account", "refresh", "openai", "--json"],
+    [ocxEntry, "account", "list", "openai", "--quota", "--json"],
     {
       windowsHide: true,
       encoding: "utf8",
@@ -120,6 +122,26 @@ const model = mode === "review" ? "gpt-6.1-sol" : "gpt-6-luna";
 const effort =
   mode === "candidate" ? "high" : mode === "draft" ? "max" : "xhigh";
 const source = readFileSync(inputPath, "utf8");
+const sourceInput = JSON.parse(source);
+const actualSchema = scopedOutputSchema(
+  JSON.parse(readFileSync(schemaPath, "utf8")),
+  sourceInput,
+  mode,
+);
+const actualSchemaText = JSON.stringify(actualSchema);
+const actualSchemaHash = createHash("sha256")
+  .update(actualSchemaText)
+  .digest("hex");
+const actualSchemaPath = join(
+  directory,
+  "codex-logs",
+  `${actualSchemaHash}.schema.json`,
+);
+if (!existsSync(actualSchemaPath))
+  writeFileSync(actualSchemaPath, actualSchemaText, {
+    flag: "wx",
+    mode: 0o600,
+  });
 if (Buffer.byteLength(source) > 500_000)
   throw new Error("codex-input-overflow");
 let context: ReturnType<typeof candidateRelativeContext> | undefined;
@@ -129,7 +151,7 @@ if (mode === "candidate") {
     fileMustExist: true,
   });
   try {
-    context = candidateRelativeContext(db, JSON.parse(source));
+    context = candidateRelativeContext(db, sourceInput);
   } finally {
     db.close();
   }
@@ -209,7 +231,7 @@ try {
           "-c",
           'approval_policy="never"',
           "--output-schema",
-          schemaPath,
+          actualSchemaPath,
           "--output-last-message",
           outputPath,
           "--color",
@@ -232,7 +254,8 @@ try {
       child.stdin.on("error", () => {});
       child.stdin.end(prompt);
       let stopped = false,
-        checking = false;
+        checking = false,
+        timedOut = false;
       let exited = false;
       let pendingStop: Promise<void> | undefined;
       let stopFailed = false;
@@ -245,6 +268,15 @@ try {
       };
       process.on("SIGINT", stop);
       process.on("SIGTERM", stop);
+      // Bound subscription usage and avoid one stalled request holding a batch
+      // lane indefinitely. Unknown usage retains its budget reservation.
+      const deadline = setTimeout(
+        () => {
+          timedOut = true;
+          stop();
+        },
+        mode === "candidate" ? 600_000 : mode === "draft" ? 900_000 : 1_200_000,
+      );
       let pendingCheck: Promise<void> | undefined;
       const timer = setInterval(() => {
         if (checking) return;
@@ -270,6 +302,7 @@ try {
         child.on("error", () => done(-1));
       });
       clearInterval(timer);
+      clearTimeout(deadline);
       await pendingCheck;
       await pendingStop;
       process.off("SIGINT", stop);
@@ -298,10 +331,12 @@ try {
         effort,
         inputHash: hash,
         actualPromptHash,
+        actualSchemaHash,
         usage,
         reservedProxyUsd,
         settled,
         stopped,
+        timedOut,
         stopFailed,
         exitCode: result,
         diagnosticCodes,

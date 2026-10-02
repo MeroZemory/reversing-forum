@@ -10,6 +10,7 @@ import {
   codexPrompt,
   stopCodexProcess,
   relativeSegmentStarts,
+  scopedOutputSchema,
 } from "../../src/server/chat-pipeline/relative-context";
 
 function fixture() {
@@ -58,6 +59,42 @@ function fixture() {
 }
 
 describe("후보 상대 구간", () => {
+  it("실제 입력 식별자와 항목 수를 출력 스키마에 고정하고 템플릿을 보존한다", () => {
+    const template = {
+      properties: {
+        packetId: { type: "string" },
+        blocks: {
+          type: "array",
+          minItems: 1,
+          maxItems: 6,
+          items: { properties: { batchId: { type: "string" } } },
+        },
+      },
+    };
+    const bound = scopedOutputSchema(
+      template,
+      {
+        packetId: "packet",
+        blocks: [{ batchId: "first" }, { batchId: "second" }],
+      },
+      "candidate",
+    );
+    expect(bound.properties.blocks.minItems).toBe(2);
+    expect(bound.properties.blocks.maxItems).toBe(2);
+    expect(bound.properties.blocks.items.properties.batchId.enum).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(bound.properties.packetId.enum).toEqual(["packet"]);
+    expect(template.properties.blocks.minItems).toBe(1);
+    expect(() =>
+      scopedOutputSchema(
+        template,
+        { blocks: [{ batchId: "same" }, { batchId: "same" }] },
+        "candidate",
+      ),
+    ).toThrow("invalid-output-schema-scope");
+  });
   it("순수 헬퍼는 정렬된 투영 행을 변경하지 않고 숫자 경계만 반환한다", () => {
     const projections = [
       {
@@ -256,11 +293,42 @@ describe("후보 상대 구간", () => {
       "codex-input-overflow",
     );
     expect(() =>
-      codexPrompt("x".repeat(499_900), [
+      codexPrompt(JSON.stringify({ text: "x".repeat(499_900) }), [
         { batchId: "b", segmentStarts: [0], rule: "경계" },
       ]),
     ).toThrow("codex-input-overflow");
     expect(codexPrompt("{}").prompt).not.toContain('"context"');
+  });
+  it("근거의 반복 해시를 숫자로 줄여도 공개본 해시와 원본 입력은 보존한다", () => {
+    const first = "a".repeat(64),
+      second = "b".repeat(64);
+    const source = JSON.stringify({
+      entries: [
+        {
+          candidateKey: "candidate",
+          publicHash: "public-snapshot",
+          publicData: { title: "논점" },
+          original: {
+            questionIds: [first],
+            responseIds: [second],
+            evidence: [
+              { id: first, text: "질문", segment: 0 },
+              { id: second, text: "답변", segment: 0 },
+            ],
+          },
+        },
+      ],
+    });
+    const value = codexPrompt(source);
+    expect(value.inputHash).toBe(
+      createHash("sha256").update(source).digest("hex"),
+    );
+    expect(value.prompt).not.toContain(first);
+    expect(value.prompt).not.toContain(second);
+    expect(value.prompt).toContain('"questionIds":[0]');
+    expect(value.prompt).toContain('"responseIds":[1]');
+    expect(value.prompt).toContain('"publicHash":"public-snapshot"');
+    expect(value.prompt).toContain("통과 항목은 reasons를 빈 배열");
   });
 });
 
