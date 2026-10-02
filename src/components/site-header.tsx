@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AccountButton } from "./account-button";
+import { AuthLinks } from "./auth-links";
 import { BrandLogo } from "./brand-logo";
 import type { Viewer } from "@/lib/types";
 
@@ -17,14 +18,7 @@ export function SiteHeader({ viewer }: { viewer: Viewer | null }) {
               <AccountButton />
             </>
           ) : (
-            <>
-              <Link className="account-link" href="/login">
-                로그인
-              </Link>
-              <Link className="account-link" href="/register">
-                회원가입
-              </Link>
-            </>
+            <AuthLinks />
           )}
         </nav>
       </div>

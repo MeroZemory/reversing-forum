@@ -26,7 +26,7 @@ export function AccountButton() {
   }
 
   return (
-    <span className="account-control">
+    <span className="account-control" aria-busy={busy}>
       <Button
         type="button"
         variant="quiet"
@@ -39,7 +39,7 @@ export function AccountButton() {
       </Button>
       {error && (
         <span role="alert" className="inline-error">
-          다시 시도해 주세요.
+          로그아웃하지 못했습니다. 다시 시도해 주세요.
         </span>
       )}
     </span>

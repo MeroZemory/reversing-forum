@@ -1,5 +1,10 @@
-import { kindLabels, type PostKind } from "@/lib/types";
+import { getPostPurpose, purposeLabels, type PostKind } from "@/lib/types";
 
 export function KindBadge({ kind }: { kind: PostKind }) {
-  return <span className={`kind-badge kind-${kind}`}>{kindLabels[kind]}</span>;
+  const purpose = getPostPurpose(kind);
+  return (
+    <span className={`kind-badge kind-${purpose}`}>
+      {purposeLabels[purpose]}
+    </span>
+  );
 }
