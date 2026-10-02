@@ -1,1 +1,12 @@
 .env
+.env.*
+!.env.example
+/KakaoTalk*.txt
+node_modules/
+.next/
+.next-e2e-*/
+.next-verification/
+data/
+*.tsbuildinfo
+playwright-report/
+test-results/
