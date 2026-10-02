@@ -57,6 +57,7 @@ function run(
     bundle?: Record<string, unknown>;
     entry?: Record<string, unknown>;
     verdict?: Record<string, unknown>;
+    replacePublished?: boolean;
   } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "publish-editorial-synthetic-"));
@@ -183,6 +184,7 @@ globalThis.fetch = async (url, options = {}) => {
           "bundle.json",
           "review.json",
           command,
+          ...(overrides.replacePublished ? ["--replace-published"] : []),
         ],
         { cwd: root, stdio: "pipe", timeout: 20_000 },
       );
@@ -268,6 +270,54 @@ it("reuses an unchanged published snapshot without publishing again", () => {
   expect(result.failed).toBe(false);
   expect(result.actions).toEqual(["basis", undefined, "snapshot"]);
   expect(result.receipt).toMatchObject({ published: 1, held: 0, errors: 0 });
+});
+
+it("preserves a published article when a corpus run produces a different snapshot", () => {
+  const result = run({
+    state: "published",
+    hash: "synthetic-curated-hash",
+    screeningStatus: "published",
+    post: { id: "synthetic-post", status: "published" },
+  });
+  expect(result.failed).toBe(false);
+  expect(result.actions).toEqual(["basis", undefined]);
+  expect(result.receipt).toMatchObject({
+    ingested: 0,
+    published: 1,
+    held: 0,
+    errors: 0,
+    receipts: [{ incomingSnapshotSkipped: true }],
+  });
+});
+
+it("updates a published article only when explicitly requested and freshly reviewed", () => {
+  const result = run(
+    {
+      state: "published",
+      hash: "synthetic-curated-hash",
+      screeningStatus: "published",
+      post: { id: "synthetic-post", status: "published" },
+    },
+    "publish",
+    200,
+    { replacePublished: true },
+  );
+  expect(result.failed).toBe(false);
+  expect(result.actions).toEqual([
+    "basis",
+    undefined,
+    "revise",
+    "review",
+    "approve",
+    "publish",
+    "snapshot",
+  ]);
+  expect(result.receipt).toMatchObject({
+    ingested: 1,
+    published: 1,
+    held: 0,
+    errors: 0,
+  });
 });
 
 it.each(["publish", "ingest"])(

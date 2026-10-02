@@ -53,7 +53,15 @@ const digest = (value: unknown) =>
 const bundlePath = process.argv[2];
 const reviewPath = process.argv[3];
 const command = process.argv[4] || "ingest";
-if (!bundlePath || !reviewPath || !["ingest", "publish"].includes(command))
+const replacePublished = process.argv[5] === "--replace-published";
+if (
+  !bundlePath ||
+  !reviewPath ||
+  !["ingest", "publish"].includes(command) ||
+  process.argv.length > 6 ||
+  (process.argv[5] && !replacePublished) ||
+  (replacePublished && command !== "publish")
+)
   throw new Error("usage-publish-editorial-bundle-review-ingest-or-publish");
 const bundle = JSON.parse(readFileSync(resolve(bundlePath), "utf8")) as Bundle;
 const review = JSON.parse(
@@ -202,6 +210,23 @@ async function main() {
           state: existing.state,
           screeningStatus: existing.screeningStatus,
           post: existing.post ?? null,
+        });
+        continue;
+      }
+      // A corpus import must not replace an already curated public article.
+      // Updating it requires an explicit run and the same full review gates.
+      if (
+        existing?.state === "published" &&
+        existing.post?.status === "published" &&
+        !sameSnapshot &&
+        !replacePublished
+      ) {
+        published++;
+        receipts.push({
+          candidateKey: entry.candidateKey,
+          state: "published",
+          post: existing.post,
+          incomingSnapshotSkipped: true,
         });
         continue;
       }

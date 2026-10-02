@@ -16,7 +16,7 @@ import { ChatJobStore } from "../../src/server/chat-pipeline/job-store";
 import { SANITIZER_VERSION } from "../../src/server/chat-pipeline/prepare";
 
 const policy = "reusable-technical-knowledge-v3";
-const promptVersion = "editorial-reusable-knowledge-v6";
+const promptVersion = "editorial-reusable-knowledge-v7";
 const script = fileURLToPath(
   new URL("../../scripts/chat-editorial-batches.ts", import.meta.url),
 );
@@ -546,17 +546,25 @@ it("rejects a review hash after the public text changes", () => {
   }
 });
 
-it("rejects old draft caches and review packets", () => {
-  const f = fixture();
-  try {
-    f.write("input.json", {
-      promptVersion: "editorial-qa-partial-v2",
-      entries: [],
-    });
-    f.write("output.json", { complete: true, entries: [] });
-    expect(() => f.run("review")).toThrow();
-    expect(() => f.run("bundle")).toThrow();
-  } finally {
-    f.close();
-  }
-});
+it.each(["editorial-qa-partial-v2", "editorial-reusable-knowledge-v6"])(
+  "rejects old draft cache %s and review packets",
+  (oldPromptVersion) => {
+    const f = fixture();
+    try {
+      f.write("input.json", {
+        promptVersion: oldPromptVersion,
+        qualityPolicyVersion: policy,
+        entries: [],
+      });
+      f.write("output.json", { complete: true, entries: [] });
+      expect(() => f.run("review")).toThrow();
+      f.write("input.json", {
+        qualityPolicyVersion: "old-policy",
+        entries: [],
+      });
+      expect(() => f.run("bundle")).toThrow();
+    } finally {
+      f.close();
+    }
+  },
+);
