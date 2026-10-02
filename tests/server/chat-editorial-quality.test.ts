@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -11,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { ChatJobStore } from "../../src/server/chat-pipeline/job-store";
+import { SANITIZER_VERSION } from "../../src/server/chat-pipeline/prepare";
 
 const policy = "reusable-technical-knowledge-v2";
 const promptVersion = "editorial-reusable-knowledge-v5";
@@ -28,6 +31,7 @@ function fixture() {
     writeFileSync(join(root, name), JSON.stringify(data));
   write("data/chat-pipeline/processing-record.json", { synthetic: true });
   return {
+    directory: join(root, "data/chat-pipeline"),
     write,
     read: (name: string) =>
       JSON.parse(readFileSync(resolve(root, name), "utf8")),
@@ -53,6 +57,208 @@ function fixture() {
     },
   };
 }
+
+function prepareFixture(needsContext: boolean[]) {
+  const f = fixture();
+  const sources = [0, 1].map((part) => ({
+    id: `synthetic-source-${part}`,
+    bytes: new TextEncoder().encode(
+      "연습방 카카오톡 대화\n--------------- 2026년 10월 2일 금요일 ---------------\n" +
+        needsContext
+          .map((_, i) => i)
+          .filter((i) => i % 2 === part)
+          .map(
+            (i) =>
+              `[가상발언자] [오전 9:${String(i).padStart(2, "0")}] 연습용 분석 질문 ${i}\n`,
+          )
+          .join(""),
+    ),
+  }));
+  const seed = (flags: boolean[], version = "synthetic-extraction-v1") => {
+    const store = new ChatJobStore(f.directory);
+    try {
+      store.prepare(sources, {
+        targetPrepared: true,
+        scopeApproved: true,
+        externalApproved: true,
+        sampleReviewed: true,
+        scopeVersion: "synthetic-scope",
+        reviewScopeVersion: "synthetic-scope",
+        reviewRuleVersion: SANITIZER_VERSION,
+        externalVersion: "synthetic-external",
+        maxMessages: 100,
+        overlap: 1,
+        promptVersion: version,
+      });
+      for (const batch of store.listBatches()) {
+        store.importResult(
+          batch.batchId,
+          JSON.stringify({
+            batchId: batch.batchId,
+            inputHash: batch.inputHash,
+            complete: true,
+            candidates: batch.input.messages.map((message) => {
+              const index = Number(message.text.match(/(\d+)$/)![1]);
+              return {
+                localId: `synthetic-${index}`,
+                title: `연습용 분석 질문 ${index}`,
+                topic: "기술",
+                questionIds: [message.id],
+                responseIds: [],
+                uncertainties: flags[index] ? ["필수 문맥 누락"] : [],
+                needsContext: flags[index],
+              };
+            }),
+            dispositions: [],
+          }),
+        );
+      }
+    } finally {
+      store.close();
+    }
+  };
+  const snapshot = () => {
+    const store = new ChatJobStore(f.directory);
+    try {
+      return {
+        candidates: store.listCandidates(),
+        summary: store.summary(),
+      };
+    } finally {
+      store.close();
+    }
+  };
+  seed(needsContext);
+  return { ...f, seed, snapshot };
+}
+
+it("prepares only resolved candidates across mixed sources without changing source storage or coverage", () => {
+  const f = prepareFixture(Array.from({ length: 44 }, (_, i) => i % 2 === 0));
+  try {
+    const before = f.snapshot();
+    const database = readFileSync(join(f.directory, "jobs.sqlite"));
+    const counts = f.run("prepare");
+    expect(counts).toEqual({
+      candidates: 44,
+      draftCandidates: 22,
+      deferredCandidates: 22,
+      draftBatches: 2,
+    });
+    const manifest = f.read(
+      "data/chat-pipeline/editorial-batches/manifest.json",
+    );
+    expect(manifest.deferredCandidateKeys).toEqual(
+      before.candidates
+        .filter((c) => c.needsContext)
+        .map((c) => c.candidateKey),
+    );
+    expect(manifest).toMatchObject({
+      candidates: 44,
+      draftCandidates: 22,
+      deferredCandidates: 22,
+      deferredReason: "needs-context",
+    });
+    const packets = manifest.packets.map((packet: { input: string }) =>
+      f.read(packet.input),
+    );
+    expect(
+      packets.map((packet: { entries: unknown[] }) => packet.entries.length),
+    ).toEqual([20, 2]);
+    const entries = packets.flatMap(
+      (packet: { entries: ReturnType<typeof source>[] }) => packet.entries,
+    );
+    expect(
+      entries.map((entry: ReturnType<typeof source>) => entry.candidateKey),
+    ).toEqual(
+      before.candidates
+        .filter((c) => c.needsContext === false)
+        .map((c) => c.candidateKey),
+    );
+    expect(
+      entries.every(
+        (entry: ReturnType<typeof source>) => entry.needsContext === false,
+      ),
+    ).toBe(true);
+    for (const packet of packets) {
+      expect(packet.promptVersion).toBe(promptVersion);
+      expect(packet.qualityPolicyVersion).toBe(policy);
+      expect(packet.packetId).toBe(
+        digest({
+          promptVersion,
+          qualityPolicyVersion: policy,
+          instruction: packet.instructions.split(" evidence는")[0],
+          entries: packet.entries,
+        }),
+      );
+    }
+    expect(readFileSync(join(f.directory, "jobs.sqlite"))).toEqual(database);
+    expect(f.snapshot()).toEqual(before);
+    expect(f.run("prepare")).toEqual(counts);
+    expect(
+      f.read("data/chat-pipeline/editorial-batches/manifest.json"),
+    ).toEqual(manifest);
+  } finally {
+    f.close();
+  }
+});
+
+it("defers all unresolved candidates with zero LLM packets and no fabricated completions", () => {
+  const f = prepareFixture([true, true, true, true]);
+  try {
+    const before = f.snapshot();
+    expect(f.run("prepare")).toEqual({
+      candidates: 4,
+      draftCandidates: 0,
+      deferredCandidates: 4,
+      draftBatches: 0,
+    });
+    expect(
+      f.read("data/chat-pipeline/editorial-batches/manifest.json"),
+    ).toEqual({
+      packets: [],
+      candidates: 4,
+      draftCandidates: 0,
+      deferredCandidates: 4,
+      deferredCandidateKeys: before.candidates.map((c) => c.candidateKey),
+      deferredReason: "needs-context",
+    });
+    expect(readdirSync(join(f.directory, "editorial-batches"))).toEqual([
+      "manifest.json",
+    ]);
+    expect(f.snapshot()).toEqual(before);
+  } finally {
+    f.close();
+  }
+});
+
+it("makes a previously deferred candidate eligible when refreshed source processing resolves its context", () => {
+  const f = prepareFixture([true, false]);
+  try {
+    f.run("prepare");
+    const first = f.read("data/chat-pipeline/editorial-batches/manifest.json");
+    expect(first.deferredCandidateKeys).toHaveLength(1);
+    f.seed([false, false], "synthetic-extraction-v2");
+    const before = f.snapshot();
+    expect(f.run("prepare")).toEqual({
+      candidates: 2,
+      draftCandidates: 2,
+      deferredCandidates: 0,
+      draftBatches: 1,
+    });
+    const next = f.read("data/chat-pipeline/editorial-batches/manifest.json");
+    expect(next.deferredCandidateKeys).toEqual([]);
+    const packet = f.read(next.packets[0].input);
+    expect(
+      packet.entries.map(
+        (entry: ReturnType<typeof source>) => entry.candidateKey,
+      ),
+    ).toContain(first.deferredCandidateKeys[0]);
+    expect(next.packets[0].packetId).not.toBe(first.packets[0].packetId);
+    expect(f.snapshot()).toEqual(before);
+  } finally {
+    f.close();
+  }
+});
 
 function source(needsContext = false) {
   return {

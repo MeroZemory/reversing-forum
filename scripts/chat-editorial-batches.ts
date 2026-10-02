@@ -84,25 +84,30 @@ async function main() {
     const db = new Database(join(directory, "jobs.sqlite"), { readonly: true });
     try {
       const candidates = store.listCandidates();
+      const deferredCandidateKeys = candidates
+        .filter((c) => c.needsContext !== false)
+        .map((c) => c.candidateKey);
       const byId = new Map<string, Evidence>();
       for (const batch of store.listBatches())
         for (const m of batch.input.messages)
           if (!byId.has(m.id)) byId.set(m.id, m);
-      const entries = candidates.map((c) => {
-        const ids = [...new Set([...c.questionIds, ...c.responseIds])];
-        const { evidence, period } = editorialEvidence(db, ids, byId);
-        return {
-          candidateKey: c.candidateKey,
-          title: c.title,
-          topic: c.topic,
-          questionIds: c.questionIds,
-          responseIds: c.responseIds,
-          period,
-          uncertainties: c.uncertainties,
-          needsContext: c.needsContext,
-          evidence,
-        };
-      });
+      const entries = candidates
+        .filter((c) => c.needsContext === false)
+        .map((c) => {
+          const ids = [...new Set([...c.questionIds, ...c.responseIds])];
+          const { evidence, period } = editorialEvidence(db, ids, byId);
+          return {
+            candidateKey: c.candidateKey,
+            title: c.title,
+            topic: c.topic,
+            questionIds: c.questionIds,
+            responseIds: c.responseIds,
+            period,
+            uncertainties: c.uncertainties,
+            needsContext: c.needsContext,
+            evidence,
+          };
+        });
       const packets: { packetId: string; input: string; output: string }[] = [];
       for (let start = 0; start < entries.length; start += 20) {
         const selected = entries.slice(start, start + 20);
@@ -128,10 +133,20 @@ async function main() {
           output: join(outputDirectory, `${packetId}.draft.output.json`),
         });
       }
-      write("manifest.json", { packets });
+      const counts = {
+        candidates: candidates.length,
+        draftCandidates: entries.length,
+        deferredCandidates: deferredCandidateKeys.length,
+      };
+      write("manifest.json", {
+        packets,
+        ...counts,
+        deferredCandidateKeys,
+        deferredReason: "needs-context",
+      });
       console.log(
         JSON.stringify({
-          candidates: entries.length,
+          ...counts,
           draftBatches: packets.length,
         }),
       );
