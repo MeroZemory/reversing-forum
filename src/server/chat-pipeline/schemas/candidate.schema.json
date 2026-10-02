@@ -1,0 +1,76 @@
+{
+  "type": "object",
+  "properties": {
+    "packetId": { "type": "string", "maxLength": 64 },
+    "complete": { "type": "boolean" },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "batchId": { "type": "string", "maxLength": 64 },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "localId": { "type": "string", "maxLength": 80 },
+                "title": { "type": "string", "maxLength": 180 },
+                "topic": { "type": "string", "maxLength": 120 },
+                "questionIds": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 0, "maximum": 1000 },
+                  "minItems": 1
+                },
+                "responseIds": {
+                  "type": "array",
+                  "items": { "type": "integer", "minimum": 0, "maximum": 1000 }
+                },
+                "uncertainties": {
+                  "type": "array",
+                  "items": { "type": "string", "maxLength": 500 },
+                  "maxItems": 20
+                },
+                "needsContext": { "type": "boolean" }
+              },
+              "required": [
+                "localId",
+                "title",
+                "topic",
+                "questionIds",
+                "responseIds",
+                "uncertainties",
+                "needsContext"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          },
+          "noncandidateRanges": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 0, "maximum": 1000 },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "contextIds": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0, "maximum": 1000 }
+          }
+        },
+        "required": [
+          "batchId",
+          "candidates",
+          "noncandidateRanges",
+          "contextIds"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 6
+    }
+  },
+  "required": ["packetId", "complete", "blocks"],
+  "additionalProperties": false
+}

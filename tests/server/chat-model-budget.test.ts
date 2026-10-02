@@ -1,0 +1,396 @@
+import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { spawn } from "node:child_process";
+import {
+  ModelBudget,
+  normalizeUsage,
+  usageProxyUsd,
+  reservationProxyUsd,
+  accountAvailable,
+  mcpServerName,
+  cliDiagnosticCodes,
+  privateCliDiagnostic,
+  CodexUsageCollector,
+  collectRolloutMetadata,
+  type ModelBudgetConfig,
+} from "@/server/chat-pipeline/model-budget";
+import {
+  summarizeReceipts,
+  selectRollouts,
+} from "../../scripts/chat-model-usage";
+
+const config: ModelBudgetConfig = {
+  accountId: "test-account",
+  batchStartedAt: new Date(Date.now() - 1000).toISOString(),
+  weeklyProxyUsd: { low: 10, central: 16.6581, high: 18.1036 },
+  maxPercent: 10,
+  creditsPerProxyUsd: 25,
+  sources: ["https://example.test/measured"],
+  method: "per-invocation-token-proxy",
+};
+const usage = {
+  input_tokens: 100_000,
+  cached_input_tokens: 80_000,
+  output_tokens: 10_000,
+};
+describe("pipeline model proxy budget", () => {
+  it("charges uncached, cached and inclusive output separately", () => {
+    expect(usageProxyUsd("gpt-6.1-sol", normalizeUsage(usage)!)).toBeCloseTo(
+      0.148,
+    );
+    expect(usageProxyUsd("gpt-6-luna", normalizeUsage(usage)!)).toBeCloseTo(
+      0.0078,
+    );
+    expect(
+      usageProxyUsd(
+        "gpt-6-luna",
+        normalizeUsage({
+          input_tokens: 4338149,
+          cached_input_tokens: 3797504,
+          output_tokens: 30546,
+        })!,
+      ),
+    ).toBeCloseTo(0.10731254);
+    expect(normalizeUsage({ ...usage, reasoning_output_tokens: 8000 })).toEqual(
+      normalizeUsage(usage),
+    );
+    expect(normalizeUsage({ input_tokens: 10, output_tokens: 5 })).toBeNull();
+    expect(
+      normalizeUsage({ ...usage, cached_input_tokens: 100001 }),
+    ).toBeNull();
+    expect(normalizeUsage({ ...usage, input_tokens: NaN })).toBeNull();
+  });
+  it("retains failed or unknown calls, settles once and charges actual overruns", () => {
+    const ledger = new ModelBudget(":memory:", config);
+    try {
+      const id = ledger.reserve("gpt-6.1-sol", "review", 0.8, "child")!;
+      expect(
+        ledger.reserve("gpt-6-luna", "candidate", 0.3, "another"),
+      ).toBeNull();
+      expect(ledger.settle(id, "gpt-6.1-sol", usage, 1)).toBe(false);
+      expect(
+        ledger.settle(id, "gpt-6.1-sol", {
+          input_tokens: 10,
+          output_tokens: 5,
+        }),
+      ).toBe(false);
+      expect(ledger.settle(id, "gpt-6-luna", usage)).toBe(false);
+      expect(ledger.summary().chargedOrReservedProxyUsd).toBe(0.8);
+      expect(ledger.summary().unknownRequests).toBe(1);
+      expect(ledger.settle(id, "gpt-6.1-sol", usage)).toBe(true);
+      expect(ledger.settle(id, "gpt-6.1-sol", usage)).toBe(false);
+      const overrun = ledger.reserve("gpt-6.1-sol", "review", 0.1, "overrun")!;
+      expect(
+        ledger.settle(overrun, "gpt-6.1-sol", {
+          ...usage,
+          output_tokens: 200000,
+        }),
+      ).toBe(true);
+      expect(ledger.summary().chargedOrReservedProxyUsd).toBeGreaterThan(1);
+      expect(
+        ledger.reserve("gpt-6-luna", "candidate", 0.01, "blocked"),
+      ).toBeNull();
+      expect(ledger.summary().outputTokens).toBe(210000);
+    } finally {
+      ledger.close();
+    }
+  });
+  it("uses low denominator, rejects >10%, expires closed, ignores global quota delta", () => {
+    const ledger = new ModelBudget(":memory:", config);
+    try {
+      expect(ledger.summary().limitProxyUsd).toBe(1);
+      expect(
+        ledger.reserve(
+          "gpt-6-luna",
+          "candidate",
+          0.1,
+          "s",
+          Date.now() + 8 * 86400000,
+        ),
+      ).toBeNull();
+      expect(
+        accountAvailable(
+          { id: config.accountId, quota: { weeklyPercent: 30 } },
+          config.accountId,
+        ),
+      ).toBe(true);
+      expect(
+        accountAvailable(
+          { id: config.accountId, quota: { weeklyPercent: 99.9 } },
+          config.accountId,
+        ),
+      ).toBe(true);
+      expect(
+        accountAvailable(
+          { id: config.accountId, quota: { weeklyPercent: 100 } },
+          config.accountId,
+        ),
+      ).toBe(false);
+      expect(
+        accountAvailable(
+          { id: "different", quota: { weeklyPercent: 0 } },
+          config.accountId,
+        ),
+      ).toBe(false);
+      expect(accountAvailable({ id: config.accountId }, config.accountId)).toBe(
+        false,
+      );
+    } finally {
+      ledger.close();
+    }
+    for (const override of [
+      { maxPercent: 11 },
+      { creditsPerProxyUsd: 1 },
+      { weeklyProxyUsd: { low: 20, central: 10, high: 30 } },
+    ])
+      expect(
+        () => new ModelBudget(":memory:", { ...config, ...override }),
+      ).toThrow("invalid-model-budget");
+    const minimal = {
+      ...config,
+      reservation: {
+        safetyFactor: 1,
+        extraInputTokens: 0,
+        promptBytesPerToken: 1,
+      },
+    };
+    expect(reservationProxyUsd(minimal, "draft", "abc")).toBeCloseTo(0.0120003);
+    expect(
+      reservationProxyUsd(
+        {
+          ...minimal,
+          reservation: {
+            ...minimal.reservation,
+            outputTokens: { draft: 48000 },
+          },
+        },
+        "draft",
+        "abc",
+      ),
+    ).toBeCloseTo(0.0240003);
+  });
+  it("seeds historical thread usage exactly once even when above cap", () => {
+    const ledger = new ModelBudget(":memory:", config);
+    try {
+      expect(
+        ledger.seedUsage("explicit-thread", "gpt-6-luna", "candidate", usage),
+      ).toBe(true);
+      expect(
+        ledger.seedUsage("explicit-thread", "gpt-6-luna", "candidate", usage),
+      ).toBe(false);
+      expect(ledger.summary().requests).toBe(1);
+      expect(ledger.summary().inputTokens).toBe(100000);
+    } finally {
+      ledger.close();
+    }
+  });
+  it("prevents concurrent processes reserving beyond the same SQLite cap", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "model-budget-test-"));
+    const path = join(directory, "budget.sqlite");
+    const ledger = new ModelBudget(path, config);
+    const moduleUrl = pathToFileURL(
+      resolve("src/server/chat-pipeline/model-budget.ts"),
+    ).href;
+    const code = `import { ModelBudget } from ${JSON.stringify(moduleUrl)};
+      const ledger = new ModelBudget(${JSON.stringify(path)}, ${JSON.stringify(config)});
+      console.log(JSON.stringify(ledger.reserve('gpt-6-luna','candidate',0.7,'parallel'))); ledger.close();`;
+    const run = () =>
+      new Promise<string>((done, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--import", "tsx", "--input-type=module", "-e", code],
+          { windowsHide: true },
+        );
+        let output = "",
+          error = "";
+        child.stdout.on("data", (chunk) => (output += chunk));
+        child.stderr.on("data", (chunk) => (error += chunk));
+        child.on("error", reject);
+        child.on("close", (exit) =>
+          exit === 0 ? done(output.trim()) : reject(new Error(error)),
+        );
+      });
+    try {
+      const results = await Promise.all([run(), run()]);
+      expect(
+        results.filter((result) => JSON.parse(result) !== null),
+      ).toHaveLength(1);
+      expect(ledger.summary().chargedOrReservedProxyUsd).toBe(0.7);
+    } finally {
+      ledger.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("JSON usage telemetry", () => {
+  it("reports allowlisted error codes and strips prompt and secrets from private diagnostics", () => {
+    const prompt = "private prompt line with error";
+    const stderr =
+      prompt +
+      "\nError: invalid_json_schema\nError: api_key=sk-secret\nError: Bearer secret-token";
+    expect(cliDiagnosticCodes(stderr)).toContain("invalid_json_schema");
+    const diagnostic = privateCliDiagnostic(stderr, prompt);
+    expect(diagnostic).not.toContain(prompt);
+    expect(diagnostic).not.toContain("sk-secret");
+    expect(diagnostic).not.toContain("secret-token");
+    expect(cliDiagnosticCodes("unexpected argument --bad")).toEqual([
+      "argument_error",
+    ]);
+  });
+  it("reads only MCP section names, including root, quoted and dotted TOML keys", () => {
+    expect(mcpServerName("[mcp_servers]")).toBeNull();
+    expect(mcpServerName("[ mcp_servers . playwright ] # comment with ]")).toBe(
+      "playwright",
+    );
+    expect(mcpServerName('["mcp_servers"."server.with.dots".env]')).toBe(
+      "server.with.dots",
+    );
+    expect(mcpServerName("[mcp_servers.'server with spaces'.headers]")).toBe(
+      "server with spaces",
+    );
+    expect(mcpServerName('[mcp_servers."name\\\"with-quote"]')).toBe(
+      'name"with-quote',
+    );
+    expect(mcpServerName('[mcp_servers."\\u006eode_repl"]')).toBe("node_repl");
+    expect(mcpServerName('key = "private value"')).toBeNull();
+    expect(mcpServerName("[unrelated.section]")).toBeNull();
+    expect(() => mcpServerName("[mcp_servers.invalid key]")).toThrow(
+      "unsupported-mcp-config-shape",
+    );
+  });
+  it("collects only final CLI usage and deduplicates repeated completions", () => {
+    const collector = new CodexUsageCollector();
+    collector.accept(
+      JSON.stringify({ type: "thread.started", thread_id: "child" }),
+    );
+    collector.accept(
+      JSON.stringify({
+        type: "item.completed",
+        item: { text: "ignored private content" },
+        usage: { input_tokens: 999999 },
+      }),
+    );
+    const completed = JSON.stringify({
+      type: "turn.completed",
+      usage: { ...usage, reasoning_output_tokens: 8000 },
+    });
+    collector.accept(completed);
+    collector.accept(completed);
+    expect(collector.threadId).toBe("child");
+    expect(collector.finalUsage()).toEqual(normalizeUsage(usage));
+    collector.accept(
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { ...usage, input_tokens: 200000 },
+      }),
+    );
+    expect(collector.finalUsage()).toBeNull();
+  });
+  it("fails closed for malformed, failed and missing-cache JSON", () => {
+    for (const line of [
+      "not JSON",
+      JSON.stringify({ type: "turn.failed" }),
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 10, output_tokens: 2 },
+      }),
+    ]) {
+      const c = new CodexUsageCollector();
+      c.accept(JSON.stringify({ type: "turn.completed", usage }));
+      c.accept(line);
+      expect(c.rawUsage()).toBeNull();
+    }
+  });
+  it("counts cumulative rollout deltas once, attributes model switches and ignores conversation records", () => {
+    const event = (u: unknown) =>
+      JSON.stringify({
+        type: "event_msg",
+        payload: {
+          type: "token_count",
+          info: { total_token_usage: u, last_token_usage: usage },
+        },
+      });
+    const lines = [
+      JSON.stringify({
+        type: "session_meta",
+        payload: {
+          id: "child",
+          cwd: "same-repo",
+          source: { subagent: { thread_spawn: { parent_thread_id: "main" } } },
+        },
+      }),
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-6-luna" },
+      }),
+      JSON.stringify({ type: "response_item", payload: { text: "ignored" } }),
+      event(usage),
+      event(usage),
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-6.1-sol" },
+      }),
+      event({
+        input_tokens: 150000,
+        cached_input_tokens: 120000,
+        output_tokens: 15000,
+        reasoning_output_tokens: 12000,
+      }),
+    ];
+    const record = collectRolloutMetadata(lines)!;
+    expect(record.totals["gpt-6-luna"]).toEqual(normalizeUsage(usage));
+    expect(record.totals["gpt-6.1-sol"]).toEqual({
+      inputTokens: 50000,
+      cachedInputTokens: 40000,
+      outputTokens: 5000,
+    });
+    expect(record.unknownSnapshots).toBe(0);
+    expect(
+      selectRollouts(
+        [
+          record,
+          record,
+          { ...record, threadId: "unrelated", parentThreadId: undefined },
+        ],
+        new Set(["main"]),
+        true,
+      ),
+    ).toEqual([record]);
+    expect(selectRollouts([record], new Set(["main"]), false)).toEqual([]);
+    expect(collectRolloutMetadata(lines.slice(1))).toBeNull();
+  });
+  it("summarizes receipt sessions once and retains unknown reservations", () => {
+    const receipt = {
+      reservationId: "one",
+      sessionId: "child",
+      parentThreadId: "main",
+      model: "gpt-6-luna" as const,
+      usage: normalizeUsage(usage),
+      settled: true,
+      reservedProxyUsd: 0.1,
+    };
+    const result = summarizeReceipts(
+      [
+        receipt,
+        receipt,
+        { ...receipt, reservationId: "two", usage: null, settled: false },
+        {
+          ...receipt,
+          reservationId: "other",
+          sessionId: "unrelated",
+          parentThreadId: "elsewhere",
+        },
+      ],
+      new Set(["main"]),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].requests).toBe(2);
+    expect(result[0].inputTokens).toBe(100000);
+    expect(result[0].unknownRequests).toBe(1);
+    expect(result[0].chargedOrReservedProxyUsd).toBeCloseTo(0.1078);
+  });
+});
