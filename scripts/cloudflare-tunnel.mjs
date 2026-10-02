@@ -29,7 +29,14 @@ if (
 )
   throw new Error("invalid-origin-port");
 mkdirSync(directory, { recursive: true });
-const env = readFileSync("C:/_authentication/cloudflare-common.env", "utf8");
+const projectTokenPath = "C:/_authentication/reversing-cloudflare.env";
+const env = readFileSync(
+  process.env.CLOUDFLARE_TOKEN_FILE ||
+    (existsSync(projectTokenPath)
+      ? projectTokenPath
+      : "C:/_authentication/cloudflare-common.env"),
+  "utf8",
+);
 const token = env
   .match(/^\s*CLOUDFLARE_API_TOKEN\s*=\s*(.+)\s*$/m)?.[1]
   .trim()
