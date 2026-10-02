@@ -1,10 +1,16 @@
 import Link from "next/link";
-import { AccountButton } from "./account-button";
+import type { ReactNode } from "react";
 import { AuthLinks } from "./auth-links";
 import { BrandLogo } from "./brand-logo";
-import type { Viewer } from "@/lib/types";
+import type { Author } from "@/lib/types";
 
-export function SiteHeader({ viewer }: { viewer: Viewer | null }) {
+export function SiteHeader({
+  viewer,
+  logoutControl,
+}: {
+  viewer: Author | null;
+  logoutControl: ReactNode;
+}) {
   return (
     <header className="site-header">
       <div className="shell header-inner">
@@ -15,7 +21,7 @@ export function SiteHeader({ viewer }: { viewer: Viewer | null }) {
               <Link className="account-link member-link" href="/me">
                 내 글
               </Link>
-              <AccountButton />
+              {logoutControl}
             </>
           ) : (
             <AuthLinks />

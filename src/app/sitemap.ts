@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 import { listPostPage } from "@/server/forum";
-import { siteUrl } from "@/lib/format";
+import { siteUrl } from "@/server/site-config";
 
 export const dynamic = "force-dynamic";
 

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "@/components/site-header";
-import { getViewer } from "@/server/auth";
-import { siteUrl } from "@/lib/format";
+import { loadViewer } from "@/server/screens";
+import { AccountButton } from "@/features/account-button";
+import { siteUrl } from "@/server/site-config";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const viewer = await getViewer();
+  const viewer = await loadViewer();
   return (
     // Browser companions can add attributes to this document element before
     // hydration. Scope the exception to <html>; page content stays checked.
@@ -31,7 +32,10 @@ export default async function RootLayout({
         <a className="skip-link" href="#main">
           본문으로 바로가기
         </a>
-        <SiteHeader viewer={viewer} />
+        <SiteHeader
+          viewer={viewer}
+          logoutControl={viewer ? <AccountButton /> : null}
+        />
         <main id="main" tabIndex={-1}>
           {children}
         </main>

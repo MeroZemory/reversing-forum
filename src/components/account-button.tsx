@@ -1,30 +1,7 @@
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { authClient } from "@/lib/auth-client";
+import type { AccountButtonState } from "@/lib/interaction-types";
 import { Button } from "./ui/action";
-
-export function AccountButton() {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(false);
-
-  async function signOut() {
-    setBusy(true);
-    setError(false);
-    try {
-      const result = await authClient.signOut();
-      if (result.error) throw new Error("sign out failed");
-      router.push("/");
-      router.refresh();
-    } catch {
-      setError(true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
+export function AccountButtonView({ state }: { state: AccountButtonState }) {
+  const { busy, error, signOut } = state;
   return (
     <span className="account-control" aria-busy={busy}>
       <Button

@@ -573,6 +573,59 @@ test("내 보류 글에서 작성·취소하거나 공개 상태가 바뀐 글�
   }
 });
 
+test("등록 응답이 늦게 도착해도 이미 떠난 작성 화면으로 강제 이동하지 않는다", async ({
+  page,
+  baseURL,
+}) => {
+  const registration = await register(page.request, baseURL!);
+  const { user } = await registration.json();
+  const draftKey = `reversing-all:draft:${user.id}`;
+  await page.goto("/new");
+  await page
+    .getByLabel("제목", { exact: true })
+    .fill("응답을 기다리는 분석 글");
+  await page
+    .getByLabel("본문", { exact: true })
+    .fill("서버 응답이 도착하기 전에 목록으로 돌아갑니다.");
+  await expect
+    .poll(() => page.evaluate((key) => sessionStorage.getItem(key), draftKey))
+    .toContain("서버 응답");
+  let requested = false;
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(
+    "**/api/posts",
+    async (route) => {
+      requested = true;
+      await waiting;
+      await route.fulfill({
+        status: 201,
+        json: { id: "delayed-post", status: "published" },
+      });
+    },
+    { times: 1 },
+  );
+  try {
+    await page
+      .getByRole("button", { name: "글 등록하기", exact: true })
+      .click();
+    await expect.poll(() => requested).toBe(true);
+    await page.getByRole("link", { name: "목록으로", exact: true }).click();
+    await expect(page).toHaveURL(`${baseURL}/`);
+    release();
+    await expect
+      .poll(() => page.evaluate((key) => sessionStorage.getItem(key), draftKey))
+      .toBeNull();
+    await expect(page).toHaveURL(`${baseURL}/`);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("최신 글");
+  } finally {
+    release();
+    await page.unroute("**/api/posts");
+  }
+});
+
 test("글 등록 대기 중 입력과 목적·미리보기 변경을 막는다", async ({
   page,
   baseURL,

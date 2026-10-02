@@ -1,12 +1,8 @@
-"use client";
-
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Send } from "lucide-react";
-import { getPostPurpose, type PostKind, type PostPurpose } from "@/lib/types";
+import type { PostFormState } from "@/lib/interaction-types";
 import { ActionLink, Button } from "./ui/action";
 import { MarkdownBody } from "./markdown-body";
-
 const choices = [
   {
     kind: "question",
@@ -30,149 +26,44 @@ const choices = [
   },
 ] as const;
 
-export function PostForm({
-  viewerId,
-  initialPurpose,
-  initialTag,
+export function PostFormView({
+  state,
   from = "/",
 }: {
-  viewerId: string;
-  initialPurpose?: PostPurpose;
-  initialTag?: string;
+  state: PostFormState;
   from?: string;
 }) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [tags, setTags] = useState(initialTag || "");
-  const [kind, setKind] = useState<PostKind>(
-    choices.find((choice) => getPostPurpose(choice.kind) === initialPurpose)
-      ?.kind || "discussion",
-  );
-  const [preview, setPreview] = useState(false);
-  const [ready, setReady] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [restored, setRestored] = useState(false);
+  const {
+    busy,
+    error,
+    title,
+    body,
+    tags,
+    kind,
+    preview,
+    saved,
+    restored,
+    setTitle,
+    setBody,
+    setTags,
+    setKind,
+    setPreview,
+    submit,
+  } = state;
   const errorRef = useRef<HTMLParagraphElement>(null);
-  const submitted = useRef(false);
-  const mounted = useRef(true);
-  const draftKey = `reversing-all:draft:${viewerId}`;
-  const choice = choices.find((item) => item.kind === kind) || choices[2];
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem(draftKey);
-      if (stored) {
-        const draft = JSON.parse(stored);
-        if (
-          typeof draft.title === "string" &&
-          typeof draft.body === "string" &&
-          typeof draft.tags === "string" &&
-          choices.some((item) => item.kind === draft.kind)
-        ) {
-          setTitle(draft.title.slice(0, 160));
-          setBody(draft.body.slice(0, 30000));
-          setTags(draft.tags.slice(0, 140));
-          setKind(draft.kind);
-          setRestored(true);
-        }
-      }
-    } catch {}
-    setReady(true);
-  }, [draftKey]);
-
-  useEffect(() => {
-    if (!ready || submitted.current) return;
-    try {
-      if (title || body || tags) {
-        sessionStorage.setItem(
-          draftKey,
-          JSON.stringify({ title, body, tags, kind }),
-        );
-        setSaved(true);
-      } else {
-        sessionStorage.removeItem(draftKey);
-        setSaved(false);
-      }
-    } catch {
-      setSaved(false);
-    }
-  }, [title, body, tags, kind, ready, draftKey]);
-
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (busy) return;
-    const parsedTags = [
-      ...new Set(
-        tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-      ),
-    ];
-    if (title.trim().length < 2 || body.trim().length < 10) {
-      setPreview(false);
-      setError("제목은 2자 이상, 본문은 10자 이상 입력해 주세요.");
-      return;
-    }
-    if (parsedTags.length > 5 || parsedTags.some((tag) => tag.length > 24)) {
-      setError("태그는 최대 5개, 각 24자까지 입력할 수 있습니다.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/posts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          body: body.trim(),
-          kind,
-          tags: parsedTags,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        setError(
-          response.status === 401
-            ? "글을 쓰려면 다시 로그인해 주세요."
-            : result.error ||
-                "글을 등록하지 못했습니다. 입력한 내용을 확인해 주세요.",
-        );
-        return;
-      }
-      submitted.current = true;
-      try {
-        sessionStorage.removeItem(draftKey);
-      } catch {}
-      if (mounted.current) {
-        router.push(`/posts/${result.id}?from=${encodeURIComponent(from)}`);
-        router.refresh();
-      }
-    } catch {
-      setError(
-        "연결이 끊겼습니다. 내 글에서 등록 여부를 확인한 뒤 다시 시도해 주세요.",
-      );
-    } finally {
-      if (!submitted.current) setBusy(false);
-    }
-  }
-
+  const choice = choices.find((item) => item.kind === kind) || choices[2];
   return (
-    <form className="editor-form" onSubmit={submit} aria-busy={busy}>
+    <form
+      className="editor-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+      aria-busy={busy}
+    >
       <fieldset className="purpose-picker" disabled={busy}>
         <legend>작성 목적</legend>
         <div className="purpose-options">

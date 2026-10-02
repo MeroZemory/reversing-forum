@@ -1,100 +1,44 @@
-"use client";
-
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Send, MessageSquare } from "lucide-react";
 import { formatDate } from "@/lib/format";
-import type { Comment, Viewer, PostPurpose } from "@/lib/types";
+import type { Comment } from "@/lib/types";
+import type {
+  CommentFormViewProps,
+  CommentSectionViewProps,
+} from "@/lib/interaction-types";
 import { ActionLink, Button } from "./ui/action";
-
-function CommentForm({
-  postId,
+export function CommentFormView({
   parentId,
   label,
-  onDone,
   placeholder,
-  viewerId,
-  postPath,
-}: {
-  postId: string;
-  parentId?: string;
-  label: string;
-  onDone?: () => void;
-  placeholder: string;
-  viewerId: string;
-  postPath: string;
-}) {
-  const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [body, setBody] = useState("");
-  const [needsLogin, setNeedsLogin] = useState(false);
-  const [draftStored, setDraftStored] = useState(false);
+  state,
+}: CommentFormViewProps) {
+  const {
+    busy,
+    error,
+    body,
+    needsLogin,
+    draftStored,
+    setBody,
+    submit,
+    loginHref,
+    rememberReply,
+  } = state;
   const errorRef = useRef<HTMLParagraphElement>(null);
   const inputId = `comment-${parentId || "new"}`;
-  const draftKey = `reversing-all:comment:${viewerId}:${postId}:${parentId || "root"}`;
-  function saveDraft(value: string) {
-    try {
-      if (value) sessionStorage.setItem(draftKey, value);
-      else sessionStorage.removeItem(draftKey);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem(draftKey);
-      if (saved) setBody(saved.slice(0, 2000));
-    } catch {}
-  }, [draftKey]);
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (busy) return;
-    const formElement = event.currentTarget;
-    setBusy(true);
-    setError("");
-    setNeedsLogin(false);
-    try {
-      const response = await fetch(`/api/posts/${postId}/comments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          body: body.trim(),
-          parentId: parentId || null,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        if (response.status === 401) {
-          setNeedsLogin(true);
-          setDraftStored(saveDraft(body));
-        }
-        setError(
-          response.status === 401
-            ? "댓글을 남기려면 다시 로그인해 주세요."
-            : result.error || "댓글을 등록하지 못했습니다.",
-        );
-        return;
-      }
-      formElement.reset();
-      setBody("");
-      saveDraft("");
-      onDone?.();
-      router.refresh();
-    } catch {
-      setError("연결에 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
-    <form onSubmit={submit} className="comment-form" aria-busy={busy}>
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const form = event.currentTarget;
+        void submit(() => form.reset());
+      }}
+      className="comment-form"
+      aria-busy={busy}
+    >
       <label className="sr-only" htmlFor={inputId}>
         {label}
       </label>
@@ -112,7 +56,6 @@ function CommentForm({
         autoFocus={!!parentId}
         onChange={(event) => {
           setBody(event.currentTarget.value);
-          saveDraft(event.currentTarget.value);
         }}
       />
       {error && (
@@ -130,15 +73,8 @@ function CommentForm({
           <ActionLink
             variant="secondary"
             size="compact"
-            href={`/login?returnTo=${encodeURIComponent(`${postPath}#comments`)}`}
-            onNavigate={() => {
-              try {
-                sessionStorage.setItem(
-                  `reversing-all:resume-reply:${viewerId}:${postId}`,
-                  parentId || "root",
-                );
-              } catch {}
-            }}
+            href={loginHref}
+            onNavigate={rememberReply}
           >
             다시 로그인
           </ActionLink>
@@ -155,35 +91,16 @@ function CommentForm({
   );
 }
 
-export function CommentSection({
-  postId,
+export function CommentSectionView({
   comments,
   viewer,
-  postPath,
   purpose,
-}: {
-  postId: string;
-  comments: Comment[];
-  viewer: Viewer | null;
-  postPath: string;
-  purpose: PostPurpose;
-}) {
-  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  replyingTo,
+  setReplyingTo,
+  loginHref,
+  renderComposer,
+}: CommentSectionViewProps) {
   const roots = comments.filter((comment) => !comment.parentId);
-  useEffect(() => {
-    if (!viewer) return;
-    try {
-      const key = `reversing-all:resume-reply:${viewer.id}:${postId}`;
-      const parent = sessionStorage.getItem(key);
-      if (!parent) return;
-      sessionStorage.removeItem(key);
-      if (
-        comments.some((comment) => comment.id === parent && !comment.parentId)
-      )
-        setReplyingTo(parent);
-    } catch {}
-  }, [postId, viewer?.id, comments, viewer]);
-
   function closeReply(id: string) {
     setReplyingTo(null);
     requestAnimationFrame(() =>
@@ -229,17 +146,14 @@ export function CommentSection({
               {replyingTo === comment.id ? "답글 닫기" : "답글"}
             </Button>
           )}
-          {replyingTo === comment.id && !reply && (
-            <CommentForm
-              postId={postId}
-              parentId={comment.id}
-              label={`${comment.author.name}님에게 답글`}
-              placeholder={`${comment.author.name}님의 댓글에 답글을 남겨 주세요.`}
-              onDone={() => closeReply(comment.id)}
-              viewerId={viewer!.id}
-              postPath={postPath}
-            />
-          )}
+          {replyingTo === comment.id &&
+            !reply &&
+            renderComposer({
+              parentId: comment.id,
+              label: `${comment.author.name}님에게 답글`,
+              placeholder: `${comment.author.name}님의 댓글에 답글을 남겨 주세요.`,
+              onDone: () => closeReply(comment.id),
+            })}
         </div>
       </div>
     );
@@ -269,22 +183,12 @@ export function CommentSection({
       )}
       <div className="comment-composer">
         {viewer ? (
-          <CommentForm
-            postId={postId}
-            label="댓글 작성"
-            placeholder={placeholder}
-            viewerId={viewer.id}
-            postPath={postPath}
-          />
+          renderComposer({ label: "댓글 작성", placeholder })
         ) : (
           <div className="comment-login">
             <MessageSquare size={18} aria-hidden="true" />
             <p>댓글로 질문에 답하거나 의견을 나눠 주세요.</p>
-            <ActionLink
-              variant="secondary"
-              size="compact"
-              href={`/login?returnTo=${encodeURIComponent(`${postPath}#comments`)}`}
-            >
+            <ActionLink variant="secondary" size="compact" href={loginHref}>
               로그인하고 댓글 쓰기
             </ActionLink>
           </div>

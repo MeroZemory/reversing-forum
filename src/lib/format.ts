@@ -21,14 +21,6 @@ export function safeReturnPath(value: unknown) {
   return value;
 }
 
-export function siteUrl() {
-  return (
-    process.env.SITE_URL ||
-    process.env.BETTER_AUTH_URL ||
-    "http://127.0.0.1:3000"
-  );
-}
-
 export function safeAuthReturn(value: unknown) {
   const path = safeReturnPath(value);
   return /^\/(login|register)(\/|$)/.test(
