@@ -850,6 +850,20 @@ describe("independent bulk preflight", () => {
     j[0].entries[0].answers.correction = "yes";
     expect(resolveAt(prepared, j, c, posts).entries[0].action).toBe("hold");
   });
+  it("rejects an OLD id borrowed from another entry in the same packet", async () => {
+    const c = [candidate("a", "new A"), candidate("b", "new B")];
+    const posts = [post("P", "old A"), post("Q", "old B")];
+    const { prepared } = await prepare(c, posts, { a: "P", b: "Q" });
+    const [first, second] = prepared.packets[0].items;
+    expect(first.candidates.some((old) => old.id === "P")).toBe(false);
+    expect(second.candidates.some((old) => old.id === "P")).toBe(true);
+    const j = judgment(prepared, "distinct");
+    j[0].entries[0].answers.related_topic = "yes";
+    j[0].entries[0].relatedIds = ["P"];
+    expect(() => resolveAt(prepared, j, c, posts)).toThrow(
+      "invalid-batched-judgment",
+    );
+  });
   it("fails missing, duplicate, empty and tampered batched results before returning output", async () => {
     const c = [candidate("a", "new"), candidate("b", "newer")],
       posts = [post("old", "old")];
