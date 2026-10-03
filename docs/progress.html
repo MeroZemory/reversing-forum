@@ -1180,6 +1180,27 @@
               >가공 실행 보고</a
             >
           </p>
+          <p id="latest-remaining-review">
+            2026-10-03 19:39 KST 후속 검토 기록에서 296개 대상의 첫 6개 묶음,
+            120개가 실제 작성·독립 검토를 마쳤으며 46개 승인·74개 보류입니다.
+            앞선 첫 60개는 18개 승인·42개 보류였고 이 수치를 최신 결과와
+            합산하지 않습니다. 후속 추가 게시는 0개이며, 전체 가공본을 모아 벌크
+            검사와 실제 게시 게이트를 마쳐야 합니다.
+            <a
+              href="../data/editorial-readability-20261003/remaining-v10/review-results.private.json"
+              >후속 작성·독립 검토 기록 · 비공개</a
+            >
+          </p>
+          <p id="latest-remaining-repairs">
+            승인본의 모호한 표현 등 3개는 관리자 수정 제안으로 별도
+            기록했습니다. 제안은 아직 게시하지 않았으며, 수정한 같은 최종본의 새
+            독립 검토를 통과한 뒤 벌크 검사·운영자 승인·최종 게시 검수를
+            거칩니다. 제안 수를 승인·공개 수에 더하지 않습니다.
+            <a
+              href="../data/editorial-readability-20261003/remaining-v10/repair-proposals.private.json"
+              >관리자 수정 제안과 새 독립 검토 조건 · 비공개</a
+            >
+          </p>
           <p id="latest-editorial-mobile-ui">
             <strong>별도 UI 할 일: 작은 화면의 편집 출처 안내.</strong>
             운영 화면 검수는 통과했지만 출처 안내가 본문보다 크게 보이는 개선
@@ -1225,8 +1246,11 @@
               >37개 갱신 후 백업·대조 근거</a
             >. 이후 <code>952ac3f</code>의 프록시 조회 지연 보완은 실제 작성
             결과 승인·최종 계정 확인·정산과 관련 59개·타입·포맷·작업 1개 제한
-            빌드가 통과했습니다. 앞선 696개 전체 검사·85개 프롬프트
-            검사·<code>7796c7f</code>의 59개와 합산하지 않습니다.
+            빌드가 통과했습니다. 공용 OCX를 재시작하거나 계정을 변경하지 않고
+            하위 조회의 확인 시간을 늘렸습니다. 코드 <code>952ac3f</code>와
+            보고서 기록 <code>5f8eea7</code>은 푸시됐습니다. 앞선 696개 전체
+            검사·85개 프롬프트 검사·<code>7796c7f</code>의 59개와 합산하지
+            않습니다.
             <a
               href="../data/editorial-readability-20261003/proxy-probe-verification.json"
               >18:48 후속 실행·검사 근거</a
@@ -4574,6 +4598,25 @@
                 </td>
               </tr>
               <tr>
+                <th scope="row">후속 작성·독립 검토</th>
+                <td>120개 / 대상 296개<br />승인 46개 · 보류 74개</td>
+                <td>
+                  10/03 19:39 · 첫 6개 묶음<br />후속 게시 0개 · 전체 취합 후
+                  벌크 검사
+                </td>
+                <td>
+                  <a href="#latest-remaining-review">후속 검토 시점별 기록</a>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">관리자 수정 제안</th>
+                <td>3개 · 제안 게시 0개</td>
+                <td>
+                  수정본의 새 독립 검토 필요<br />승인·공개 수에 합산하지 않음
+                </td>
+                <td><a href="#latest-remaining-repairs">별도 수정 제안</a></td>
+              </tr>
+              <tr>
                 <th scope="row">서버·빌드 검증</th>
                 <td>
                   전체 696개 / 33파일<br />후속 59개 / 3파일 · 빌드작업 1개
@@ -4595,7 +4638,17 @@
                 </td>
               </tr>
               <tr>
-                <th scope="row">운영 로컬 복구</th>
+                <th scope="row">갱신 후 운영 로컬 복구</th>
+                <td>공개 37개 · 25테이블·5,595행 동일</td>
+                <td>
+                  10/03 18:43 백업·격리 복구<br />원격 복구와 재부팅은 미검증
+                </td>
+                <td>
+                  <a href="#latest-proxy-and-backup">갱신 후 백업 근거</a>
+                </td>
+              </tr>
+              <tr>
+                <th scope="row">이전 운영 로컬 복구</th>
                 <td>25테이블·4,391행 동일</td>
                 <td>
                   공개 43개 당시 백업·격리 복구<br />원격 복구와 재부팅은 미검증
