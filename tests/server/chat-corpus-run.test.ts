@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { stopCodexProcess } from "../../src/server/chat-pipeline/relative-context";
+import { qualityPolicyVersion } from "../../src/server/chat-pipeline/editorial-policy";
 import {
   mkdtempSync,
   mkdirSync,
@@ -1452,7 +1453,7 @@ describe("corpus orchestration boundaries", () => {
                 publicHash: id(5),
                 passed: true,
                 quality: true,
-                qualityPolicyVersion: "reusable-technical-knowledge-v3",
+                qualityPolicyVersion,
                 meaning: true,
                 privacy: true,
                 rights: true,

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { qualityPolicyVersion } from "../../src/server/chat-pipeline/editorial-policy";
 
 const context = vi.hoisted(() => ({ headers: new Headers() }));
 const mail = vi.hoisted(() => ({ links: [] as string[] }));
@@ -189,7 +190,7 @@ it.each(["new-public", "reused-public", "held", "reused-held", "stale"])(
     };
     const bundle = {
       ...versions,
-      qualityPolicyVersion: "reusable-technical-knowledge-v3",
+      qualityPolicyVersion,
       processingRecord: "processing.json",
       entries: [
         {
@@ -235,7 +236,7 @@ it.each(["new-public", "reused-public", "held", "reused-held", "stale"])(
               publicHash: draft.hash,
               passed: true,
               quality: true,
-              qualityPolicyVersion: "reusable-technical-knowledge-v3",
+              qualityPolicyVersion,
               meaning: true,
               privacy: true,
               rights: true,

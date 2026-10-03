@@ -13,7 +13,7 @@
           "quality": { "type": "boolean" },
           "qualityPolicyVersion": {
             "type": "string",
-            "enum": ["reusable-technical-knowledge-v3"]
+            "enum": ["reusable-technical-knowledge-v4"]
           },
           "meaning": { "type": "boolean" },
           "privacy": { "type": "boolean" },

@@ -1,9 +1,13 @@
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import {
+  qualityPolicyVersion,
+  editorialDisplayIssues,
+} from "../src/server/chat-pipeline/editorial-policy";
 
 // All writes use an actual authenticated server session. No direct post insertion.
-const qualityPolicyVersion = "reusable-technical-knowledge-v3";
+
 const directory = resolve("data/chat-pipeline");
 type PublicData = {
   title: string;
@@ -184,7 +188,8 @@ async function main() {
         .length !== 1 ||
       verdict.publicHash !== digest(entry.publicData) ||
       verdict.referenceId !== entry.reviewId ||
-      !entry.evidenceIds.length
+      !entry.evidenceIds.length ||
+      editorialDisplayIssues(entry.publicData).length > 0
     ) {
       held++;
       continue;

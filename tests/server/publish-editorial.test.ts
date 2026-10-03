@@ -77,7 +77,7 @@ function run(
     });
     write("bundle.json", {
       ...versions,
-      qualityPolicyVersion: "reusable-technical-knowledge-v3",
+      qualityPolicyVersion: "reusable-technical-knowledge-v4",
       processingRecord: "processing.json",
       ...overrides.bundle,
       entries: [
@@ -101,7 +101,7 @@ function run(
           publicHash,
           passed: true,
           quality: true,
-          qualityPolicyVersion: "reusable-technical-knowledge-v3",
+          qualityPolicyVersion: "reusable-technical-knowledge-v4",
           meaning: true,
           privacy: true,
           rights: true,
@@ -219,9 +219,11 @@ it.each([
   { bundle: { qualityPolicyVersion: undefined } },
   { bundle: { qualityPolicyVersion: "old-policy" } },
   { bundle: { qualityPolicyVersion: "reusable-technical-knowledge-v2" } },
+  { bundle: { qualityPolicyVersion: "reusable-technical-knowledge-v3" } },
   { verdict: { qualityPolicyVersion: undefined } },
   { verdict: { qualityPolicyVersion: "old-policy" } },
   { verdict: { qualityPolicyVersion: "reusable-technical-knowledge-v2" } },
+  { verdict: { qualityPolicyVersion: "reusable-technical-knowledge-v3" } },
   { verdict: { quality: undefined } },
   { verdict: { quality: false } },
   { verdict: { publicHash: "different-snapshot" } },
@@ -410,3 +412,24 @@ it("reports the server retry limit conflict without resetting approval or attemp
     receipts: [{ error: "editorial-http-409" }],
   });
 });
+
+it.each(["언급됐습니다.", "EAX·AX", "EAX → AX"])(
+  "holds display violations despite an exact independently approved hash: %s",
+  (body) => {
+    const data = { ...publicData, body };
+    const hash = createHash("sha256")
+      .update(JSON.stringify(data))
+      .digest("hex");
+    const result = run({}, "publish", 200, {
+      entry: { publicData: data },
+      verdict: { publicHash: hash },
+    });
+    expect(result.failed).toBe(false);
+    expect(result.actions).toEqual(["basis"]);
+    expect(result.receipt).toMatchObject({
+      ingested: 0,
+      published: 0,
+      held: 1,
+    });
+  },
+);

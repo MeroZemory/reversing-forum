@@ -13,10 +13,15 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { ChatJobStore } from "../../src/server/chat-pipeline/job-store";
+import {
+  editorialDisplayIssues,
+  editorialQualityInstruction,
+  editorialPromptVersion as promptVersion,
+  qualityPolicyVersion as sharedQualityPolicyVersion,
+} from "../../src/server/chat-pipeline/editorial-policy";
 import { SANITIZER_VERSION } from "../../src/server/chat-pipeline/prepare";
 
-const policy = "reusable-technical-knowledge-v3";
-const promptVersion = "editorial-reusable-knowledge-v7";
+const policy = "reusable-technical-knowledge-v4";
 const script = fileURLToPath(
   new URL("../../scripts/chat-editorial-batches.ts", import.meta.url),
 );
@@ -35,7 +40,7 @@ function fixture() {
     write,
     read: (name: string) =>
       JSON.parse(readFileSync(resolve(root, name), "utf8")),
-    run: (command: string) =>
+    run: (command: string, ...args: string[]) =>
       JSON.parse(
         execFileSync(
           process.execPath,
@@ -44,8 +49,11 @@ function fixture() {
             import.meta.resolve("tsx"),
             script,
             command,
-            "input.json",
-            "output.json",
+            ...(args.length
+              ? args
+              : command === "prepare"
+                ? []
+                : ["input.json", "output.json"]),
           ],
           { cwd: root, stdio: "pipe", timeout: 20_000 },
         ).toString(),
@@ -309,22 +317,10 @@ it.each([false, true])(
       expect(packet.entries).toHaveLength(needsContext ? 0 : 1);
       expect(packet.draftHeld).toHaveLength(needsContext ? 1 : 0);
       expect(packet.qualityPolicyVersion).toBe(policy);
-      for (const requirement of [
-        "대상 프로그램·도구",
-        "구체적인 증상·행동·문제",
-        "질문과 응답",
-        "첨부",
-        "OllyDbg라고 추정하지",
+      expect(packet.instructions).toContain(editorialQualityInstruction);
+      expect(packet.instructions).toContain(
         "작성자의 quality 판정을 그대로 신뢰하지",
-        "의미상 불필요한 실행 파일명·버전을 요구하지",
-        "명확한 질문만 있거나",
-        "영어 PDF·블로그",
-        "이미지가 필수일 때",
-        "글은 대화 이력이 아니라 다시 쓸 기술 지식",
-        "MBR 약어 혼선과 문맥 전환 대화를 나열한 글은 보류",
-        "핵심 지식을 남길 수 없으면 글을 만들지",
-      ])
-        expect(packet.instructions).toContain(requirement);
+      );
     } finally {
       f.close();
     }
@@ -485,7 +481,7 @@ it("accepts a self-contained conceptual question without a target executable or 
         {
           candidateKey: "synthetic",
           title: "pthread_join과 종료된 스레드의 자원 회수",
-          body: question + " 기록에는 답변이 없어 해결 여부는 미확인이다.",
+          body: question,
           tags: ["pthread_join"],
           ready: true,
           quality: true,
@@ -546,25 +542,344 @@ it("rejects a review hash after the public text changes", () => {
   }
 });
 
-it.each(["editorial-qa-partial-v2", "editorial-reusable-knowledge-v6"])(
-  "rejects old draft cache %s and review packets",
-  (oldPromptVersion) => {
+it.each([
+  "editorial-qa-partial-v2",
+  "editorial-reusable-knowledge-v6",
+  "editorial-reusable-knowledge-v7",
+])("rejects old draft cache %s and review packets", (oldPromptVersion) => {
+  const f = fixture();
+  try {
+    f.write("input.json", {
+      promptVersion: oldPromptVersion,
+      qualityPolicyVersion: policy,
+      entries: [],
+    });
+    f.write("output.json", { complete: true, entries: [] });
+    expect(() => f.run("review")).toThrow();
+    f.write("input.json", {
+      qualityPolicyVersion: "old-policy",
+      entries: [],
+    });
+    expect(() => f.run("bundle")).toThrow();
+  } finally {
+    f.close();
+  }
+});
+
+it("selects exactly 44 requested keys and explicitly defers unresolved targets", () => {
+  const f = prepareFixture(Array.from({ length: 50 }, (_, i) => i % 3 === 0));
+  try {
+    const before = f.snapshot();
+    const database = readFileSync(join(f.directory, "jobs.sqlite"));
+    const selected = before.candidates.slice(0, 44);
+    const keys = selected.map((c) => c.candidateKey).reverse();
+    f.write("keys.private.json", keys);
+    const result = f.run("prepare", "--candidate-keys", "keys.private.json");
+    const manifest = f.read(
+      "data/chat-pipeline/editorial-batches/manifest.json",
+    );
+    expect(result.candidates).toBe(44);
+    expect(manifest.requestedCandidateKeys).toEqual(keys);
+    expect(manifest.missingCandidateKeys).toEqual([]);
+    expect(manifest.deferredCandidateKeys).toEqual(
+      selected.filter((c) => c.needsContext).map((c) => c.candidateKey),
+    );
+    const packets = manifest.packets.map((packet: { input: string }) =>
+      f.read(packet.input),
+    );
+    expect(
+      packets.flatMap((packet: { entries: ReturnType<typeof source>[] }) =>
+        packet.entries.map((entry) => entry.candidateKey),
+      ),
+    ).toEqual(
+      selected.filter((c) => !c.needsContext).map((c) => c.candidateKey),
+    );
+    for (const packet of packets)
+      expect(packet.instructions).toContain(editorialQualityInstruction);
+    expect(readFileSync(join(f.directory, "jobs.sqlite"))).toEqual(database);
+    expect(f.snapshot()).toEqual(before);
+  } finally {
+    f.close();
+  }
+});
+
+it("fails the entire selection on missing keys and records missing and unresolved targets", () => {
+  const f = prepareFixture([true, false]);
+  try {
+    const before = f.snapshot();
+    const keys = before.candidates.map((c) => c.candidateKey);
+    const missing = "f".repeat(64);
+    f.write("keys.private.json", [...keys, missing]);
+    expect(() =>
+      f.run("prepare", "--candidate-keys", "keys.private.json"),
+    ).toThrow();
+    expect(
+      f.read("data/chat-pipeline/editorial-batches/manifest.json"),
+    ).toMatchObject({
+      packets: [],
+      requestedCandidateKeys: [...keys, missing],
+      missingCandidateKeys: [missing],
+      deferredCandidateKeys: before.candidates
+        .filter((c) => c.needsContext)
+        .map((c) => c.candidateKey),
+      preparationError: "candidate-keys-not-found",
+    });
+    expect(f.snapshot()).toEqual(before);
+  } finally {
+    f.close();
+  }
+});
+
+it.each(
+  [
+    null,
+    {},
+    [],
+    [12],
+    [""],
+    [" f"],
+    ["g".repeat(64)],
+    ["a".repeat(64), "a".repeat(64)],
+  ].map((keys) => ({ keys })),
+)(
+  "rejects invalid key arrays %j before writing preparation output",
+  ({ keys }) => {
     const f = fixture();
     try {
-      f.write("input.json", {
-        promptVersion: oldPromptVersion,
-        qualityPolicyVersion: policy,
-        entries: [],
-      });
-      f.write("output.json", { complete: true, entries: [] });
-      expect(() => f.run("review")).toThrow();
-      f.write("input.json", {
-        qualityPolicyVersion: "old-policy",
-        entries: [],
-      });
-      expect(() => f.run("bundle")).toThrow();
+      f.write("keys.private.json", keys);
+      expect(() =>
+        f.run("prepare", "--candidate-keys", "keys.private.json"),
+      ).toThrow();
+      expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
     } finally {
       f.close();
     }
   },
 );
+
+it.each(
+  [
+    ["--candidate-keys"],
+    ["--other", "keys.json"],
+    ["--candidate-keys", "keys.json", "extra"],
+    ["--candidate-keys", " "],
+  ].map((args) => ({ args })),
+)("rejects invalid prepare arguments %j", ({ args }) => {
+  const f = fixture();
+  try {
+    expect(() => f.run("prepare", ...args)).toThrow();
+    expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+  } finally {
+    f.close();
+  }
+});
+
+it("rejects unreadable and malformed key files without exposing their contents", () => {
+  const f = fixture();
+  try {
+    f.write("keys.private.json", []);
+    writeFileSync(
+      resolve(f.directory, "../../malformed.json"),
+      "private-invalid-json",
+    );
+    for (const name of ["missing.json", "malformed.json"]) {
+      try {
+        f.run("prepare", "--candidate-keys", name);
+        throw new Error("expected-failure");
+      } catch (error) {
+        const stderr = (error as { stderr: Buffer }).stderr.toString();
+        expect(stderr.trim()).toBe("invalid-candidate-keys-file");
+      }
+    }
+    expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+  } finally {
+    f.close();
+  }
+});
+
+it.each([
+  "제안됐습니다.",
+  "언급되었습니다.",
+  "나열됐다.",
+  "EAX·AX",
+  "EAX → AX",
+  "“EAX”",
+])(
+  "holds a visible display issue at both draft and review gates: %s",
+  (body) => {
+    const f = fixture();
+    try {
+      f.write("input.json", {
+        promptVersion,
+        qualityPolicyVersion: policy,
+        entries: [source()],
+      });
+      f.write("output.json", {
+        complete: true,
+        entries: [
+          {
+            candidateKey: "synthetic",
+            title: "레지스터 질문",
+            body,
+            tags: ["CPU"],
+            ready: true,
+            quality: true,
+            reasons: [],
+          },
+        ],
+      });
+      const draftPacket = f.read(f.run("review").reviewInput);
+      expect(draftPacket.entries).toEqual([]);
+      expect(draftPacket.draftHeld[0].reasons).toEqual(
+        editorialDisplayIssues({ title: "레지스터 질문", body }),
+      );
+      const publicData = { title: "레지스터 질문", body };
+      const publicHash = digest(publicData);
+      f.write("input.json", {
+        qualityPolicyVersion: policy,
+        entries: [
+          {
+            candidateKey: "synthetic",
+            ready: true,
+            quality: true,
+            needsContext: false,
+            original: source(),
+            publicData,
+            publicHash,
+          },
+        ],
+      });
+      f.write("output.json", {
+        complete: true,
+        entries: [
+          {
+            candidateKey: "synthetic",
+            publicHash,
+            passed: true,
+            quality: true,
+            qualityPolicyVersion: policy,
+            meaning: true,
+            privacy: true,
+            rights: true,
+            externalTransfer: true,
+            reasons: [],
+          },
+        ],
+      });
+      const result = f.run("bundle");
+      expect(f.read(result.bundle).entries).toEqual([]);
+      expect(f.read(result.review).entries[0]).toMatchObject({
+        passed: false,
+        quality: false,
+        reasons: editorialDisplayIssues(publicData),
+      });
+      expect(result.held).toBe(1);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each([
+  "EAX와 AX는 어떻게 다른가요?",
+  "이 환경에서만 확인했으며 모든 버전에 적용되는지는 미확인입니다.",
+  "이 방법만으로 원인을 확정할 수 없습니다.",
+  "`mov eax, 1`\n\n```asm\ncmp eax, 0\nje done\n```",
+  "`a → b`와 `x · y` 식을 비교합니다.",
+  "```text\n제안됐습니다. →\n```",
+])(
+  "does not treat technical syntax or real limitations as display violations: %s",
+  (body) => {
+    expect(editorialDisplayIssues({ title: "기술 질문", body })).toEqual([]);
+  },
+);
+
+it("shares concise structure and fidelity rules rather than requiring expansion", () => {
+  for (const rule of [
+    "1~3문장",
+    "1. 목록",
+    "- 목록",
+    "필수 목록을 강요하지",
+    "답을 발명하지",
+    "가설성",
+    "기술적 제약",
+    "CPU 명령",
+    "원본 URL",
+    "~합니다/~인가요",
+    "메타데이터나 비공개 reasons",
+    "의미나 사실 검증이 아니며",
+  ])
+    expect(editorialQualityInstruction).toContain(rule);
+});
+
+it("rejects v3 draft and independent review packets", () => {
+  const f = fixture();
+  try {
+    f.write("input.json", {
+      promptVersion,
+      qualityPolicyVersion: "reusable-technical-knowledge-v3",
+      entries: [],
+    });
+    f.write("output.json", { complete: true, entries: [] });
+    expect(() => f.run("review")).toThrow();
+    expect(() => f.run("bundle")).toThrow();
+  } finally {
+    f.close();
+  }
+});
+
+it("preserves standard CPU syntax and source constraints without rewriting at the draft gate", () => {
+  const f = fixture();
+  try {
+    const body =
+      "32비트 연습 환경의 명령 `mov eax, 1`을 확인합니다.\n\n```asm\ncmp eax, 0\nje done\n```\n\n이 환경 밖에서의 동작은 미확인입니다.";
+    f.write("input.json", {
+      promptVersion,
+      qualityPolicyVersion: policy,
+      entries: [{ ...source(), evidence: [{ id: "q", text: body }] }],
+    });
+    f.write("output.json", {
+      complete: true,
+      entries: [
+        {
+          candidateKey: "synthetic",
+          title: "32비트 연습 환경의 EAX 비교",
+          body,
+          tags: ["CPU"],
+          ready: true,
+          quality: true,
+          reasons: [],
+        },
+      ],
+    });
+    const packet = f.read(f.run("review").reviewInput);
+    expect(packet.entries).toHaveLength(1);
+    const entry = packet.entries[0];
+    expect(entry.publicData.body).toBe(body);
+    expect(entry.original.evidence).toEqual([{ id: "q", text: body }]);
+    expect(entry.publicHash).toBe(digest(entry.publicData));
+  } finally {
+    f.close();
+  }
+});
+
+it("requires the shared current quality policy in the independent review output schema", () => {
+  const schema = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../src/server/chat-pipeline/schemas/review.schema.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const item = schema.properties.entries.items;
+  expect(item.required).toContain("qualityPolicyVersion");
+  expect(item.properties.qualityPolicyVersion.enum).toEqual([
+    sharedQualityPolicyVersion,
+  ]);
+  expect(item.properties.qualityPolicyVersion.enum).not.toContain(
+    "reusable-technical-knowledge-v3",
+  );
+  expect(policy).toBe(sharedQualityPolicyVersion);
+});
