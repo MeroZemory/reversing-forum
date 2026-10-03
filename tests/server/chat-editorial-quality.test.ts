@@ -1214,3 +1214,439 @@ it("requires the shared current quality policy in the independent review output 
   );
   expect(policy).toBe(sharedQualityPolicyVersion);
 });
+
+const editorialSource = {
+  title: "공개 연습 문서",
+  url: "https://docs.example.com/debugging?version=1#exceptions",
+  notes: "연습 환경에서는 예외 전달 설정을 별도로 선택합니다.",
+};
+const supplementBody = `예외를 대상에 전달하려면 어떤 설정을 확인하나요?\n\n### 편집자 보충\n\n${editorialSource.notes}\n\n[공개 문서](${editorialSource.url})`;
+
+it.each([
+  "https://docs.example.com/concept_(detail)",
+  "https://docs.example.com/a(b)/c(d)",
+])(
+  "accepts a supplied Markdown citation with balanced parentheses: %s",
+  (url) => {
+    const f = fixture();
+    try {
+      supplementDraft(f, supplementBody.replace(editorialSource.url, url), [
+        { ...editorialSource, url },
+      ]);
+      const input = f.read(f.run("review").reviewInput);
+      expect(input.entries[0].ready).toBe(true);
+      expect(input.entries[0].original.editorialSources[0].url).toBe(url);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it("does not release context-held candidates when supplements are supplied", () => {
+  const f = prepareFixture([true]);
+  try {
+    const key = f.snapshot().candidates[0].candidateKey;
+    f.write("supplements.json", { [key]: [editorialSource] });
+    expect(f.run("prepare", "--supplements", "supplements.json")).toMatchObject(
+      {
+        draftCandidates: 0,
+        deferredCandidates: 1,
+        draftBatches: 0,
+      },
+    );
+    expect(
+      f.read("data/chat-pipeline/editorial-batches/manifest.json")
+        .deferredCandidateKeys,
+    ).toEqual([key]);
+    supplementDraft(f, supplementBody);
+    const input = f.read("input.json");
+    input.entries[0].needsContext = true;
+    f.write("input.json", input);
+    const review = f.read(f.run("review").reviewInput);
+    expect(review.entries).toEqual([]);
+    expect(review.draftHeld[0].reasons).toContain("needs-context");
+  } finally {
+    f.close();
+  }
+});
+
+it("does not borrow citations from another entry in the same independent review batch", () => {
+  const f = fixture();
+  try {
+    supplementDraft(f, supplementBody);
+    const input = f.read("input.json");
+    input.entries.push({
+      ...source(),
+      candidateKey: "other",
+      editorialSources: [
+        {
+          ...editorialSource,
+          url: "https://other.example.com/source",
+          notes: "다른 항목의 검증된 사실입니다.",
+        },
+      ],
+    });
+    const output = f.read("output.json");
+    output.entries.push({ ...output.entries[0], candidateKey: "other" });
+    f.write("input.json", input);
+    f.write("output.json", output);
+    expect(() => f.run("review")).toThrow(
+      "editorial-supplement-citation-required",
+    );
+    expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+    output.entries[1].body = "독립적으로 이해되는 다른 질문인가요?";
+    f.write("output.json", output);
+    const packet = f.read(f.run("review").reviewInput);
+    expect(
+      packet.entries.map((e: { original: unknown }) => e.original),
+    ).toEqual(input.entries);
+    expect(packet.entries[1].original.editorialSources).not.toEqual(
+      packet.entries[0].original.editorialSources,
+    );
+  } finally {
+    f.close();
+  }
+});
+
+function supplementDraft(
+  f: ReturnType<typeof fixture>,
+  body: string,
+  sources: unknown = [editorialSource],
+) {
+  f.write("input.json", {
+    promptVersion,
+    qualityPolicyVersion: policy,
+    entries: [
+      {
+        ...source(),
+        ...(sources === undefined ? {} : { editorialSources: sources }),
+      },
+    ],
+  });
+  f.write("output.json", {
+    complete: true,
+    entries: [
+      {
+        candidateKey: "synthetic",
+        title: "예외 전달 설정 질문",
+        body,
+        tags: ["x64dbg"],
+        ready: true,
+        quality: true,
+        reasons: [],
+      },
+    ],
+  });
+}
+
+it.each([false, true])(
+  "accepts supplement and selection flags in either order (%s) and hashes supplied facts",
+  (reverse) => {
+    const f = prepareFixture([false, false, true]);
+    try {
+      const before = f.snapshot();
+      const key = before.candidates.find((c) => !c.needsContext)!.candidateKey;
+      f.write("keys.json", [key]);
+      f.write("supplements.json", { [key]: [editorialSource] });
+      const args = reverse
+        ? ["--supplements", "supplements.json", "--candidate-keys", "keys.json"]
+        : [
+            "--candidate-keys",
+            "keys.json",
+            "--supplements",
+            "supplements.json",
+          ];
+      const packet = () =>
+        f.read(
+          f.read("data/chat-pipeline/editorial-batches/manifest.json")
+            .packets[0].input,
+        );
+      f.run("prepare", ...args);
+      const first = packet();
+      expect(first.entries).toHaveLength(1);
+      expect(first.entries[0].editorialSources).toEqual([editorialSource]);
+      expect(first.entries[0].evidence).not.toContainEqual(editorialSource);
+      expect(first.instructions).toContain(editorialQualityInstruction);
+      for (const field of ["notes", "url", "title"] as const) {
+        const changed = {
+          ...editorialSource,
+          [field]:
+            editorialSource[field] + (field === "url" ? "-new" : " 추가"),
+        };
+        f.write("supplements.json", { [key]: [changed] });
+        f.run("prepare", ...args);
+        expect(packet().packetId).not.toBe(first.packetId);
+        expect(packet().entries[0].evidence).toEqual(first.entries[0].evidence);
+      }
+      f.run("prepare", "--supplements", "supplements.json");
+      expect(
+        packet().entries.filter(
+          (e: { editorialSources?: unknown }) => e.editorialSources,
+        ),
+      ).toHaveLength(1);
+      expect(f.snapshot()).toEqual(before);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each(
+  [
+    null,
+    [],
+    {},
+    { unknown: [editorialSource] },
+    { KEY: [] },
+    { KEY: Array(9).fill(editorialSource) },
+    { KEY: [{ ...editorialSource, notes: 1 }] },
+    { KEY: [{ ...editorialSource, notes: " " }] },
+    { KEY: [{ ...editorialSource, notes: "x".repeat(4001) }] },
+    { KEY: [{ ...editorialSource, title: "x".repeat(201) }] },
+    { KEY: [{ ...editorialSource, verified: true }] },
+    ...[
+      "http://docs.example.com/",
+      "https://user:pass@docs.example.com/",
+      "https://127.0.0.1/",
+      "https://[::1]/",
+      "https://localhost/",
+      "https://docs.internal/",
+      "https://docs.example.com:8443/",
+      "https://docs.example.com/?access_token=private",
+      "https://docs.example.com/?api_key=private",
+      "https://docs.example.com/\\private",
+      " https://docs.example.com/",
+    ].map((url) => ({ KEY: [{ ...editorialSource, url }] })),
+  ].map((value) => ({ value })),
+)(
+  "rejects malformed or unsafe supplements before packet writes (%j)",
+  ({ value }) => {
+    const f = prepareFixture([false]);
+    try {
+      const before = f.snapshot();
+      const contents = JSON.stringify(value).replaceAll(
+        '"KEY"',
+        JSON.stringify(before.candidates[0].candidateKey),
+      );
+      f.write("supplements.json", JSON.parse(contents));
+      const files = readdirSync(f.directory);
+      const database = readFileSync(join(f.directory, "jobs.sqlite"));
+      expect(() =>
+        f.run("prepare", "--supplements", "supplements.json"),
+      ).toThrow();
+      expect(readdirSync(f.directory)).toEqual(files);
+      expect(readFileSync(join(f.directory, "jobs.sqlite"))).toEqual(database);
+      expect(f.snapshot()).toEqual(before);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each(["unknown", "unselected"])(
+  "rejects %s supplement candidate keys before any packet writes",
+  (scope) => {
+    const f = prepareFixture([false, false]);
+    try {
+      const keys = f.snapshot().candidates.map((c) => c.candidateKey);
+      f.write("keys.json", [keys[0]]);
+      f.write("supplements.json", {
+        [scope === "unknown" ? "f".repeat(64) : keys[1]]: [editorialSource],
+      });
+      const files = readdirSync(f.directory);
+      expect(() =>
+        f.run(
+          "prepare",
+          "--candidate-keys",
+          "keys.json",
+          "--supplements",
+          "supplements.json",
+        ),
+      ).toThrow("out-of-scope-supplement");
+      expect(readdirSync(f.directory)).toEqual(files);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each([
+  ["--supplements"],
+  ["--supplements", " "],
+  ["--supplements", "a", "--supplements", "b"],
+  ["--candidate-keys", "a", "--candidate-keys", "b"],
+  ["--supplements", "a", "--unknown", "b"],
+])(
+  "rejects duplicate, unknown or missing supplement arguments %j",
+  (...args) => {
+    const f = fixture();
+    try {
+      expect(() => f.run("prepare", ...args)).toThrow(
+        "invalid-prepare-arguments",
+      );
+      expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it("rejects unreadable, malformed and oversized supplements without leaking file contents", () => {
+  const f = fixture();
+  try {
+    writeFileSync(
+      resolve(f.directory, "../../malformed.json"),
+      "private-invalid-json",
+    );
+    f.write("oversized.json", "x".repeat(128_001));
+    for (const path of ["missing.json", "malformed.json", "oversized.json"]) {
+      try {
+        f.run("prepare", "--supplements", path);
+        throw new Error("expected-failure");
+      } catch (error) {
+        expect((error as { stderr: Buffer }).stderr.toString().trim()).toBe(
+          "invalid-supplements-file",
+        );
+      }
+    }
+    expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+  } finally {
+    f.close();
+  }
+});
+
+it.each([
+  { body: supplementBody, sources: null, error: "invalid-editorial-sources" },
+  { body: supplementBody, sources: [], error: "invalid-editorial-sources" },
+  {
+    body: "### 편집자 보충\n\n설정 설명입니다.",
+    error: "editorial-supplement-citation-required",
+  },
+  {
+    body: supplementBody.replace(
+      editorialSource.url,
+      editorialSource.url + "-invented",
+    ),
+    error: "editorial-supplement-citation-required",
+  },
+  {
+    body: supplementBody + "\n[미제공](https://other.example.com/)",
+    error: "editorial-supplement-unsupplied-citation",
+  },
+  {
+    body: `${editorialSource.notes}\n\n${supplementBody}`,
+    error: "editorial-supplement-unmarked",
+  },
+  {
+    body: `[문서](${editorialSource.url})\n\n${supplementBody}`,
+    error: "editorial-supplement-unmarked",
+  },
+  { body: editorialSource.notes, error: "editorial-supplement-unmarked" },
+  {
+    body: supplementBody + `\n\n### 다른 내용\n${editorialSource.notes}`,
+    error: "editorial-supplement-unmarked",
+  },
+  {
+    body: "### 편집자 보충\n\n```md\n[문서](" + editorialSource.url + ")\n```",
+    error: "editorial-supplement-citation-required",
+  },
+  {
+    body: supplementBody + "\n\n### 편집자 보충\n다른 설명입니다.",
+    error: "invalid-editorial-supplement-heading",
+  },
+])(
+  "fails review preparation closed on supplement safeguards ($error)",
+  ({ body, sources, error }) => {
+    const f = fixture();
+    try {
+      supplementDraft(f, body, sources);
+      expect(() => f.run("review")).toThrow(error);
+      expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it("requires supplied sources for a supplement heading and leaves source-only old packets unchanged", () => {
+  const f = fixture();
+  try {
+    supplementDraft(f, supplementBody);
+    const input = f.read("input.json");
+    delete input.entries[0].editorialSources;
+    f.write("input.json", input);
+    expect(() => f.run("review")).toThrow(
+      "editorial-supplement-sources-required",
+    );
+    const output = f.read("output.json");
+    output.entries[0].body = "예외를 대상에 전달하려면 어떤 설정을 확인하나요?";
+    f.write("output.json", output);
+    const packet = f.read(f.run("review").reviewInput);
+    expect(packet.entries[0].original).toEqual(source());
+    expect(packet.entries[0].publicData.provenance.verificationSummary).toBe(
+      "기록의 질문·제안·미확인 사항을 구분해 편집했습니다. 제안의 현재 유효성은 별도로 확인해야 합니다.",
+    );
+    input.entries[0].editorialSources = [editorialSource];
+    f.write("input.json", input);
+    const unused = f.read(f.run("review").reviewInput);
+    expect(unused.entries[0].publicData).toEqual(packet.entries[0].publicData);
+  } finally {
+    f.close();
+  }
+});
+
+it("retains separate per-entry sources for independent review, hashes notes, and preserves meaning approval gates", () => {
+  const f = fixture();
+  try {
+    supplementDraft(f, supplementBody);
+    const first = f.read(f.run("review").reviewInput);
+    expect(first.entries[0].original.editorialSources).toEqual([
+      editorialSource,
+    ]);
+    expect(first.entries[0].original.evidence).toEqual(source().evidence);
+    expect(
+      first.entries[0].publicData.provenance.verificationSummary,
+    ).toContain("편집자 보충");
+    expect(first.entries[0].publicHash).toBe(
+      digest(first.entries[0].publicData),
+    );
+    expect(first.entries[0]).not.toHaveProperty("passed");
+    const input = f.read("input.json");
+    input.entries[0].editorialSources[0].notes += " 추가로 검증한 사실입니다.";
+    f.write("input.json", input);
+    const next = f.read(f.run("review").reviewInput);
+    expect(next.packetId).not.toBe(first.packetId);
+    expect(next.entries[0].publicHash).toBe(first.entries[0].publicHash);
+    const verdict = {
+      complete: true,
+      entries: [
+        {
+          candidateKey: "synthetic",
+          publicHash: first.entries[0].publicHash,
+          passed: true,
+          quality: true,
+          qualityPolicyVersion: policy,
+          meaning: false,
+          privacy: true,
+          rights: true,
+          externalTransfer: true,
+          reasons: [],
+        },
+      ],
+    };
+    f.write("review-input.json", first);
+    f.write("review-output.json", verdict);
+    expect(
+      f.run("bundle", "review-input.json", "review-output.json").held,
+    ).toBe(1);
+    verdict.entries[0].meaning = true;
+    f.write("review-output.json", verdict);
+    const result = f.run("bundle", "review-input.json", "review-output.json");
+    expect(f.read(result.bundle).entries[0].evidenceIds).toEqual(["q", "a"]);
+    expect(f.read(result.bundle).entries[0].publicData.body).toBe(
+      supplementBody,
+    );
+  } finally {
+    f.close();
+  }
+});

@@ -60,6 +60,108 @@ type ReviewResult = {
   }[];
 };
 type Evidence = EditorialEvidence & { segment?: number };
+type EditorialSource = { title: string; url: string; notes: string };
+
+function validateSources(value: unknown): asserts value is EditorialSource[] {
+  if (!Array.isArray(value) || !value.length || value.length > 8)
+    throw new Error("invalid-editorial-sources");
+  for (const source of value) {
+    if (
+      !source ||
+      typeof source !== "object" ||
+      Object.keys(source).sort().join(",") !== "notes,title,url" ||
+      ["title", "url", "notes"].some(
+        (key) =>
+          typeof source[key] !== "string" ||
+          !source[key].trim() ||
+          source[key] !== source[key].trim() ||
+          /[\u0000-\u001f\u007f]/.test(source[key]),
+      ) ||
+      source.title.length > 200 ||
+      source.url.length > 2048 ||
+      source.notes.length > 4000
+    )
+      throw new Error("invalid-editorial-sources");
+    let url: URL;
+    try {
+      url = new URL(source.url);
+    } catch {
+      throw new Error("invalid-editorial-source-url");
+    }
+    // DNS names only; no local/IP targets, credentials, nonstandard ports or
+    // secret-bearing query parameters. No network request or fact verification.
+    if (
+      !source.url.startsWith("https://") ||
+      /[\s\\<>"`]/.test(source.url) ||
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      (url.port && url.port !== "443") ||
+      !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(
+        url.hostname,
+      ) ||
+      /(?:^|\.)(?:localhost|local|internal|lan|home|test|invalid)$/i.test(
+        url.hostname,
+      ) ||
+      [...url.searchParams.keys()].some((key) =>
+        /auth|token|key|secret|password|credential|signature|session/i.test(
+          key,
+        ),
+      )
+    )
+      throw new Error("invalid-editorial-source-url");
+  }
+}
+
+function supplementPresent(
+  original: DraftInput["entries"][number],
+  body: string,
+) {
+  const sources = original.editorialSources;
+  if (sources !== undefined) validateSources(sources);
+  const prose = body.replace(/```[^\n]*\n[\s\S]*?(?:```|$)/g, "");
+  const headings = [...prose.matchAll(/^### 편집자 보충\s*$/gm)];
+  if (headings.length > 1)
+    throw new Error("invalid-editorial-supplement-heading");
+  const heading = headings[0];
+  if (heading && !sources)
+    throw new Error("editorial-supplement-sources-required");
+  const start = heading ? heading.index! + heading[0].length : prose.length;
+  const remainder = prose.slice(start);
+  const end = remainder.search(/^#{1,3}\s/m);
+  const section = heading ? remainder.slice(0, end < 0 ? undefined : end) : "";
+  const outside =
+    prose.slice(0, heading?.index ?? prose.length) +
+    (end < 0 ? "" : remainder.slice(end));
+  const citations = [
+    ...section.matchAll(
+      /\[[^\]\n]+\]\((https:\/\/(?:[^\s()]|\([^()\s]*\))+)\)|<(https:\/\/[^\s>]+)>/g,
+    ),
+  ].map((match) => match[1] ?? match[2]);
+  if (
+    heading &&
+    !citations.some((url) => sources!.some((source) => source.url === url))
+  )
+    throw new Error("editorial-supplement-citation-required");
+  if (
+    heading &&
+    citations.some((url) => !sources!.some((source) => source.url === url))
+  )
+    throw new Error("editorial-supplement-unsupplied-citation");
+  // Only detectable reuse is checked here. Paraphrases and meaning still need
+  // independent model review against this entry's evidence and supplied notes.
+  if (
+    sources?.some(
+      (source) =>
+        outside.includes(source.url) ||
+        (outside.includes(source.notes) &&
+          !original.evidence.some((e) => e.text.includes(source.notes))),
+    )
+  )
+    throw new Error("editorial-supplement-unmarked");
+  return Boolean(heading);
+}
+
 type DraftInput = {
   promptVersion: string;
   qualityPolicyVersion: string;
@@ -69,6 +171,7 @@ type DraftInput = {
     questionIds: string[];
     responseIds: string[];
     evidence: Evidence[];
+    editorialSources?: EditorialSource[];
     uncertainties: string[];
     needsContext: boolean;
   }[];
@@ -83,16 +186,24 @@ async function main() {
   const command = process.argv[2];
   if (command === "prepare") {
     const args = process.argv.slice(3);
-    if (
-      args.length &&
-      (args.length !== 2 || args[0] !== "--candidate-keys" || !args[1].trim())
-    )
-      throw new Error("invalid-prepare-arguments");
+    const options = new Map<string, string>();
+    for (let i = 0; i < args.length; i += 2) {
+      if (
+        !["--candidate-keys", "--supplements"].includes(args[i]) ||
+        !args[i + 1]?.trim() ||
+        args[i + 1].startsWith("--") ||
+        options.has(args[i])
+      )
+        throw new Error("invalid-prepare-arguments");
+      options.set(args[i], args[i + 1]);
+    }
     let requestedCandidateKeys: string[] | undefined;
-    if (args.length) {
+    if (options.has("--candidate-keys")) {
       let value: unknown;
       try {
-        value = JSON.parse(readFileSync(resolve(args[1]), "utf8"));
+        value = JSON.parse(
+          readFileSync(resolve(options.get("--candidate-keys")!), "utf8"),
+        );
       } catch {
         throw new Error("invalid-candidate-keys-file");
       }
@@ -107,6 +218,30 @@ async function main() {
         throw new Error("invalid-candidate-keys");
       requestedCandidateKeys = value;
     }
+    let supplements: Record<string, EditorialSource[]> = {};
+    if (options.has("--supplements")) {
+      let value: unknown;
+      try {
+        const file = readFileSync(
+          resolve(options.get("--supplements")!),
+          "utf8",
+        );
+        if (Buffer.byteLength(file) > 128_000) throw new Error();
+        value = JSON.parse(file);
+      } catch {
+        throw new Error("invalid-supplements-file");
+      }
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        !Object.keys(value).length ||
+        Object.keys(value).some((key) => !/^[a-f0-9]{64}$/.test(key))
+      )
+        throw new Error("invalid-supplements");
+      for (const sources of Object.values(value)) validateSources(sources);
+      supplements = value as Record<string, EditorialSource[]>;
+    }
     const store = new ChatJobStore(directory);
     const db = new Database(join(directory, "jobs.sqlite"), { readonly: true });
     try {
@@ -117,6 +252,8 @@ async function main() {
         ? allCandidates.filter((c) => requested.has(c.candidateKey))
         : allCandidates;
       const found = new Set(candidates.map((c) => c.candidateKey));
+      if (Object.keys(supplements).some((key) => !found.has(key)))
+        throw new Error("out-of-scope-supplement");
       const missingCandidateKeys =
         requestedCandidateKeys?.filter((key) => !found.has(key)) ?? [];
       const deferredCandidateKeys = candidates
@@ -157,6 +294,9 @@ async function main() {
             uncertainties: c.uncertainties,
             needsContext: c.needsContext,
             evidence,
+            ...(supplements[c.candidateKey]
+              ? { editorialSources: supplements[c.candidateKey] }
+              : {}),
           };
         });
       const packets: { packetId: string; input: string; output: string }[] = [];
@@ -245,6 +385,7 @@ async function main() {
         (e) => e.candidateKey === d.candidateKey,
       );
       if (!original) throw new Error("out-of-scope-draft");
+      const hasSupplement = supplementPresent(original, d.body);
       const publicData = {
         title: d.title.trim(),
         body: d.body.trim(),
@@ -254,7 +395,10 @@ async function main() {
           type: "chat-editorial" as const,
           period: original.period,
           verificationSummary:
-            "기록의 질문·제안·미확인 사항을 구분해 편집했습니다. 제안의 현재 유효성은 별도로 확인해야 합니다.",
+            "기록의 질문·제안·미확인 사항을 구분해 편집했습니다. 제안의 현재 유효성은 별도로 확인해야 합니다." +
+            (hasSupplement
+              ? " 편집자 보충은 운영자가 확인해 제공한 공개 출처의 사실을 별도로 구분했습니다."
+              : ""),
         },
       };
       const displayIssues = editorialDisplayIssues(publicData);
@@ -382,6 +526,7 @@ async function main() {
         r.publicHash !== entry.publicHash
       )
         throw new Error("review-snapshot-mismatch");
+      supplementPresent(entry.original, entry.publicData.body);
       const displayIssues = editorialDisplayIssues(entry.publicData);
       if (displayIssues.length)
         displayHeld.push({
