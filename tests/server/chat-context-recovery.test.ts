@@ -5,8 +5,10 @@ import {
   writeFileSync,
   readdirSync,
   statSync,
+  mkdirSync,
+  copyFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import Database from "better-sqlite3";
@@ -700,6 +702,41 @@ it("완전한 target 복구는 원본을 보존하면서 후보의 문맥 보류
   const before = snapshot(f),
     candidateKey = f.store.listCandidates()[0].candidateKey,
     [input] = f.store.listContextRecoveryInputs();
+  const editorialRoot = join(f.root, "editorial-flow"),
+    editorialDirectory = join(editorialRoot, "data", "chat-pipeline");
+  mkdirSync(editorialDirectory, { recursive: true });
+  const selected = join(editorialRoot, "candidate-keys.json");
+  writeFileSync(selected, JSON.stringify([candidateKey]));
+  const prepareEditorial = () => {
+    // Copy only the synthetic fixture, keeping CLI preparation isolated from
+    // the source store. No model call or publication occurs in this test.
+    copyFileSync(
+      join(f.store.directory, "jobs.sqlite"),
+      join(editorialDirectory, "jobs.sqlite"),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        import.meta.resolve("tsx"),
+        resolve("scripts/chat-editorial-batches.ts"),
+        "prepare",
+        "--candidate-keys",
+        selected,
+      ],
+      { cwd: editorialRoot, encoding: "utf8", timeout: 20_000 },
+    );
+    expect(result.status).toBe(0);
+    return JSON.parse(
+      readFileSync(
+        join(editorialDirectory, "editorial-batches", "manifest.json"),
+        "utf8",
+      ),
+    );
+  };
+  const pending = prepareEditorial();
+  expect(pending.packets).toEqual([]);
+  expect(pending.deferredCandidateKeys).toEqual([candidateKey]);
   expect(f.store.summary().messageDispositions.needsContext).toBe(2);
   expect(input.blocks[0].targetIds).toEqual([2, 3]);
   const raw = output(input, {
@@ -734,6 +771,23 @@ it("완전한 target 복구는 원본을 보존하면서 후보의 문맥 보류
   });
   expect(f.store.listContextRecoveryInputs()).toEqual([]);
   expect(f.store.summary().messageDispositions.needsContext).toBe(0);
+  const ready = prepareEditorial();
+  expect(ready.deferredCandidateKeys).toEqual([]);
+  expect(ready.packets).toHaveLength(1);
+  const prepared = JSON.parse(readFileSync(ready.packets[0].input, "utf8"));
+  expect(prepared.entries).toHaveLength(1);
+  expect(prepared.entries[0]).toMatchObject({
+    candidateKey,
+    needsContext: false,
+    title: "복구한 메모리 분석",
+  });
+  expect(prepared.entries[0].evidence.map((e: { id: string }) => e.id)).toEqual(
+    [
+      f.batch.input.messages[2].id,
+      f.batch.input.messages[3].id,
+      f.batch.input.messages[4].id,
+    ],
+  );
 });
 
 it("needsContext 후보의 재검토가 누락되거나 여전히 불확실하면 다시 대상에 남긴다", () => {
