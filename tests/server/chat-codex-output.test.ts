@@ -253,11 +253,11 @@ describe("CLI final lookup, settlement, output and receipt lifecycle", () => {
       });
       expect(f.lookup).toHaveBeenCalledTimes(3);
       expect(f.delays).toEqual([250, 250]);
-      expect(f.settle).not.toHaveBeenCalled();
+      expect(f.settle).toHaveBeenCalledOnce();
       expect(f.receipt).toMatchObject({
         exitCode: 0,
         stopped: true,
-        settled: false,
+        settled: true,
         finalAccountConfirmed: false,
         stopReason: "account-status-unavailable",
         outputAccepted: false,
@@ -272,13 +272,32 @@ describe("CLI final lookup, settlement, output and receipt lifecycle", () => {
     },
   );
 
-  it("does not retry a changed final identity or settle its usage", async () => {
+  it("settles project cost without retrying a changed final identity or accepting output", async () => {
     const f = await finalize({
       lookup: async () => ({ ...account, id: "other" }),
     });
     expect(f.lookup).toHaveBeenCalledOnce();
-    expect(f.settle).not.toHaveBeenCalled();
+    expect(f.settle).toHaveBeenCalledOnce();
+    expect(f.receipt).toMatchObject({
+      settled: true,
+      finalAccountConfirmed: false,
+      outputAccepted: false,
+    });
     expect(f.receipt.stopReason).toBe("account-unavailable-or-changed");
+    expect(f.reported.outputExists).toBe(false);
+    expect(f.processState.exitCode).toBe(1);
+  });
+
+  it("settles an already stopped exit-zero call while rejecting its output", async () => {
+    const f = await finalize({ stopped: true });
+    expect(f.settle).toHaveBeenCalledOnce();
+    expect(f.receipt).toMatchObject({
+      exitCode: 0,
+      stopped: true,
+      settled: true,
+      finalAccountConfirmed: true,
+      outputAccepted: false,
+    });
     expect(f.reported.outputExists).toBe(false);
     expect(f.processState.exitCode).toBe(1);
   });

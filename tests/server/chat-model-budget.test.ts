@@ -56,6 +56,7 @@ describe("Codex final account guard", () => {
       allowCreditUsage?: boolean;
       exitCode?: number | null;
       rawUsage?: unknown;
+      events?: unknown[];
       alreadyStopped?: boolean;
     } = {},
   ) {
@@ -85,10 +86,17 @@ describe("Codex final account guard", () => {
             delays.push(delay);
             done();
           },
-          collector: {
-            finalUsage: () => null,
-            rawUsage: () => ("rawUsage" in options ? options.rawUsage : usage),
-          },
+          collector: (() => {
+            const collector = new CodexUsageCollector();
+            for (const event of options.events ?? [
+              {
+                type: "turn.completed",
+                usage: "rawUsage" in options ? options.rawUsage : usage,
+              },
+            ])
+              collector.accept(JSON.stringify(event));
+            return collector;
+          })(),
           result: "exitCode" in options ? options.exitCode : 0,
           alreadyStopped: options.alreadyStopped ?? false,
           cliDiagnosticCodes: () => [],
@@ -129,7 +137,7 @@ describe("Codex final account guard", () => {
     },
   );
 
-  it("exhausts three failed fresh lookups and keeps the reservation", async () => {
+  it("settles measured project cost after three failed fresh lookups", async () => {
     const lookup = vi
       .fn()
       .mockRejectedValue(new Error("synthetic OCX failure"));
@@ -140,10 +148,12 @@ describe("Codex final account guard", () => {
       stopped: true,
       stopReason: "account-status-unavailable",
       accountStatusFailures: 3,
-      settled: false,
+      settled: true,
     });
-    expect(budget.unknownRequests).toBe(1);
-    expect(budget.chargedOrReservedProxyUsd).toBe(0.1);
+    expect(budget.unknownRequests).toBe(0);
+    expect(budget.chargedOrReservedProxyUsd).toBeCloseTo(
+      usageProxyUsd("gpt-6-luna", normalizeUsage(usage)!),
+    );
   });
 
   it.each([
@@ -162,8 +172,8 @@ describe("Codex final account guard", () => {
       expect(delays).toEqual([]);
       expect(receipt.stopReason).toBe("account-unavailable-or-changed");
       expect(receipt.accountStatusFailures).toBe(0);
-      expect(receipt.settled).toBe(false);
-      expect(budget.unknownRequests).toBe(1);
+      expect(receipt.settled).toBe(true);
+      expect(budget.unknownRequests).toBe(0);
     },
   );
 
@@ -177,7 +187,7 @@ describe("Codex final account guard", () => {
     expect(lookup).toHaveBeenCalledTimes(2);
     expect(delays).toEqual([250]);
     expect(receipt.stopReason).toBe("account-unavailable-or-changed");
-    expect(receipt.settled).toBe(false);
+    expect(receipt.settled).toBe(true);
   });
 
   it.each([false, true])(
@@ -191,7 +201,7 @@ describe("Codex final account guard", () => {
       expect(lookup).toHaveBeenCalledTimes(1);
       expect(delays).toEqual([]);
       expect(receipt.stopped).toBe(!allowCreditUsage);
-      expect(receipt.settled).toBe(allowCreditUsage);
+      expect(receipt.settled).toBe(true);
     },
   );
 
@@ -200,9 +210,19 @@ describe("Codex final account guard", () => {
     { exitCode: null },
     { rawUsage: null },
     { rawUsage: { input_tokens: 10, output_tokens: 5 } },
-    { alreadyStopped: true },
+    { rawUsage: { ...usage, cached_input_tokens: 100001 } },
+    { rawUsage: { ...usage, input_tokens: -1 } },
+    { rawUsage: { ...usage, output_tokens: 1.5 } },
+    { events: [] },
+    { events: [{ type: "turn.completed", usage }, { type: "turn.failed" }] },
+    {
+      events: [
+        { type: "turn.completed", usage },
+        { type: "turn.completed", usage: { ...usage, output_tokens: 1 } },
+      ],
+    },
   ])(
-    "does not settle a failed, unknown or stopped call after recovery: %j",
+    "does not settle a failed or unknown call after recovery: %j",
     async (options) => {
       const lookup = vi
         .fn()
@@ -215,6 +235,18 @@ describe("Codex final account guard", () => {
       expect(budget.chargedOrReservedProxyUsd).toBe(0.1);
     },
   );
+
+  it("settles a completed exit-zero call even when already stopped", async () => {
+    const { receipt, budget } = await check(async () => available, {
+      alreadyStopped: true,
+    });
+    expect(receipt.stopped).toBe(true);
+    expect(receipt.settled).toBe(true);
+    expect(budget.unknownRequests).toBe(0);
+    expect(budget.chargedOrReservedProxyUsd).toBeCloseTo(
+      usageProxyUsd("gpt-6-luna", normalizeUsage(usage)!),
+    );
+  });
 });
 
 describe("pipeline model proxy budget", () => {

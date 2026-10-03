@@ -376,7 +376,7 @@ try {
           .catch(() => {
             // A transient OCX lookup failure does not show that the account
             // changed. Let this already reserved turn finish; the mandatory
-            // final identity check still keeps failure and usage private.
+            // final identity check still keeps output private.
             accountStatusFailures++;
           })
           .finally(() => {
@@ -426,10 +426,14 @@ try {
           join(directory, "codex-logs", `${reservationId}.stderr.private.log`),
           privateCliDiagnostic(stderr, prompt),
         );
-      const settled =
-        !stopped &&
-        finalAccountConfirmed &&
-        ledger.settle(reservationId, model, collector.rawUsage(), result);
+      // Record measured project cost independently of output/account gates.
+      // Settlement does not authorize an overrun or confirm account billing.
+      const settled = ledger.settle(
+        reservationId,
+        model,
+        collector.rawUsage(),
+        result,
+      );
       const receipt = {
         reservationId,
         sessionId: collector.threadId,
