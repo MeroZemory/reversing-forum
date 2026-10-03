@@ -1,9 +1,42 @@
 import Link from "next/link";
 import type { AccountFlowState } from "@/lib/interaction-types";
-import { Button } from "./ui/action";
+import { Button, ActionLink } from "./ui/action";
 
 export function AccountFlowView({ state }: { state: AccountFlowState }) {
   const { mode, busy, error, notice, account } = state;
+  if (
+    mode === "verify" &&
+    (state.verificationStatus === "complete" ||
+      state.verificationStatus === "already-verified")
+  ) {
+    return (
+      <div className="shell auth-shell">
+        <div className="auth-card">
+          <h1>이메일 인증 완료</h1>
+          <p role="status">
+            {state.verificationStatus === "already-verified"
+              ? "이 계정의 이메일은 이미 인증되어 있습니다."
+              : "이메일 인증을 완료했습니다."}
+            {account
+              ? " 커뮤니티를 계속 이용해 주세요."
+              : " 로그인해 커뮤니티를 이용해 주세요."}
+          </p>
+          <ActionLink
+            href={
+              account ? state.continueHref || "/" : state.loginHref || "/login"
+            }
+          >
+            {account ? "계속하기" : "로그인하기"}
+          </ActionLink>
+          <p>
+            <Link href={account ? "/account" : "/"}>
+              {account ? "계정 관리" : "커뮤니티로 돌아가기"}
+            </Link>
+          </p>
+        </div>
+      </div>
+    );
+  }
   const title = {
     account: "계정 관리",
     verify: "이메일 인증",
@@ -20,8 +53,9 @@ export function AccountFlowView({ state }: { state: AccountFlowState }) {
         <h1>{title}</h1>
         {mode === "verify" && (
           <p>
-            이메일 소유권을 확인한 뒤 이메일·비밀번호로 로그인할 수 있습니다.
-            인증 링크는 1시간 동안 한 번 사용할 수 있습니다.
+            아직 인증하지 않은 가입 이메일로 인증 메일을 요청하세요. Google로
+            가입했거나 이미 인증했다면 바로 로그인할 수 있습니다. 인증 링크는
+            1시간 동안 한 번 사용할 수 있습니다.
           </p>
         )}
         {mode === "forgot" && (

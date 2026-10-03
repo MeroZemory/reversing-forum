@@ -117,6 +117,8 @@ export type AccountFlowState = {
   email: string;
   token?: string;
   loginHref?: string;
+  continueHref?: string;
+  verificationStatus?: "required" | "complete" | "already-verified";
   submit(values: {
     email?: string;
     name?: string;

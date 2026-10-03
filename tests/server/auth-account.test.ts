@@ -441,7 +441,9 @@ describe("native authentication account flow", () => {
     expect((await signup("owner@example.test")).status).toBe(200);
     expect((await login("owner@example.test")).status).toBe(403);
     const link = mailURL();
-    expect((await verifyLatest()).status).toBe(302);
+    const verified = await verifyLatest();
+    expect(verified.status).toBe(302);
+    expect(verified.headers.get("location")).toBe("/verify-email?verified=1");
     const replay = await auth.handler(new Request(link));
     expect(replay.status).toBe(302);
     expect(replay.headers.get("location")).toContain("error=invalid_token");
@@ -497,6 +499,28 @@ describe("native authentication account flow", () => {
     });
     expect(resetKnown.status).toBe(resetUnknown.status);
     expect(await resetKnown.json()).toEqual(await resetUnknown.json());
+  });
+  it("does not resend verification to an already verified account for guests or its signed-in owner", async () => {
+    await signup("owner@example.test");
+    await verifyLatest();
+    const cookie = cookieOf(await login("owner@example.test"));
+    fetchMock.mockClear();
+    const guest = await post("/send-verification-email", {
+      email: "owner@example.test",
+    });
+    const member = await post(
+      "/send-verification-email",
+      { email: "owner@example.test" },
+      cookie,
+    );
+    const unknown = await post("/send-verification-email", {
+      email: "absent@example.test",
+    });
+    expect(guest.status).toBe(200);
+    expect(member.status).toBe(200);
+    expect(await guest.json()).toEqual(await unknown.json());
+    expect(await member.json()).toEqual({ status: true });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
   it("fails uniformly and privately when mail credentials are missing", async () => {
     const key = process.env.RESEND_API_KEY;

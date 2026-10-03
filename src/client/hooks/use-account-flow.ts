@@ -39,7 +39,9 @@ export function useAccountFlow(props: {
         : "",
   );
   const [notice, setNotice] = useState(
-    props.verified ? "이메일 인증을 완료했습니다. 이제 로그인해 주세요." : "",
+    props.verified && !props.error
+      ? "이메일 인증을 완료했습니다. 이제 로그인해 주세요."
+      : "",
   );
   useEffect(() => {
     let active = true;
@@ -83,7 +85,9 @@ export function useAccountFlow(props: {
         if (props.mode === "forgot") await requestReset(email);
         else await requestVerification(email, props.returnTo);
         setNotice(
-          "입력한 주소가 대상 계정이라면 메일을 보냅니다. 받은편지함과 스팸함을 확인해 주세요. 도착하지 않으면 잠시 후 다시 요청해 주세요.",
+          props.mode === "verify"
+            ? "가입한 미인증 이메일에만 인증 메일을 요청합니다. Google로 가입했거나 이미 인증했다면 다시 받을 필요 없이 로그인할 수 있습니다. 메일이 오지 않으면 입력한 주소와 스팸함을 확인해 주세요."
+            : "입력한 주소가 대상 계정이라면 메일을 보냅니다. 받은편지함과 스팸함을 확인해 주세요. 도착하지 않으면 잠시 후 다시 요청해 주세요.",
         );
       } else if (props.mode === "reset") {
         if (!props.token)
@@ -105,6 +109,14 @@ export function useAccountFlow(props: {
   }
   return {
     mode: props.mode,
+    verificationStatus:
+      props.mode !== "verify" || props.error
+        ? "required"
+        : props.verified
+          ? "complete"
+          : account?.emailVerified
+            ? "already-verified"
+            : "required",
     account,
     busy,
     error,
@@ -113,6 +125,7 @@ export function useAccountFlow(props: {
     token: props.token,
     submit,
     loginHref: `/login?returnTo=${encodeURIComponent(safeAuthReturn(props.returnTo))}`,
+    continueHref: safeAuthReturn(props.returnTo),
     linkGoogle: () => run(() => googleSignIn("/account", true)),
     unlinkGoogle: () =>
       run(async () => {

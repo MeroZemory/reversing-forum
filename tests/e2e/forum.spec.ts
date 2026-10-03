@@ -2,6 +2,7 @@ import { test, expect, type TestInfo } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { basename, dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { register, post, verifyAndLogin } from "./helpers";
 
 function isolatedDatabase(info: TestInfo) {
@@ -12,6 +13,97 @@ function isolatedDatabase(info: TestInfo) {
 }
 
 const createdPostIds: string[] = [];
+
+test("인증 링크 결과에서 재요청 폼 대신 로그인·계속하기를 표시한다", async ({
+  page,
+}, info) => {
+  const origin = String(info.project.use.baseURL);
+  const email = `verify-result-${randomUUID()}@example.test`;
+  const password = "Test-only-passphrase-42!";
+  const response = await page.request.post("/api/auth/sign-up/email", {
+    headers: { Origin: origin },
+    data: {
+      name: "인증검수회원",
+      email,
+      password,
+      callbackURL: "/verify-email?verified=1&returnTo=%2Fnew",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  const mailbox = resolve(
+    `data/e2e-${process.env.FORUM_E2E_RUN_ID}-pass/mail.jsonl`,
+  );
+  const readMail = () =>
+    readFileSync(mailbox, "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+  expect(readMail().filter((item) => item.email === email)).toHaveLength(1);
+  await page.goto("/verify-email?returnTo=%2Fnew");
+  await page.getByLabel("이메일", { exact: true }).fill(email);
+  const resend = page.waitForResponse((response) =>
+    response.url().endsWith("/api/auth/send-verification-email"),
+  );
+  await page.getByRole("button", { name: "메일 요청", exact: true }).click();
+  expect((await resend).status()).toBe(200);
+  await expect(page.getByRole("status")).toContainText("미인증 이메일에만");
+  expect(readMail().filter((item) => item.email === email)).toHaveLength(2);
+  const message = readMail().findLast((item) => item.email === email);
+  expect(message?.url).toBeTruthy();
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(
+      width === 320 ? message.url : "/verify-email?verified=1&returnTo=%2Fnew",
+    );
+    await expect(
+      page.getByRole("heading", { name: "이메일 인증 완료", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "메일 요청" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByLabel("이메일", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "로그인하기", exact: true }),
+    ).toHaveAttribute("href", "/login?returnTo=%2Fnew");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+    ).toBe(false);
+  }
+  const login = await page.request.post("/api/auth/sign-in/email", {
+    headers: { Origin: origin },
+    data: { email, password },
+  });
+  expect(login.ok()).toBe(true);
+  await page.goto("/verify-email?returnTo=%2Fnew");
+  await expect(page.getByRole("status")).toContainText(
+    "이미 인증되어 있습니다",
+  );
+  await expect(
+    page.getByRole("link", { name: "계속하기", exact: true }),
+  ).toHaveAttribute("href", "/new");
+  await expect(page.getByRole("button", { name: "메일 요청" })).toHaveCount(0);
+  await page.request.post("/api/auth/sign-out", {
+    headers: { Origin: origin },
+  });
+  await page.goto(message.url);
+  await expect(page.getByRole("alert")).toContainText(
+    "인증 링크가 만료되었거나 이미 사용되었습니다",
+  );
+  await expect(page.getByRole("button", { name: "메일 요청" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "이메일 인증 완료", exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("이메일", { exact: true }).fill(email);
+  const repeatedRequest = page.waitForResponse((response) =>
+    response.url().endsWith("/api/auth/send-verification-email"),
+  );
+  await page.getByRole("button", { name: "메일 요청", exact: true }).click();
+  expect((await repeatedRequest).status()).toBe(200);
+  await expect(page.getByRole("status")).toContainText("이미 인증했다면");
+  expect(readMail().filter((item) => item.email === email)).toHaveLength(2);
+});
 test.afterEach(async ({}, info) => {
   if (!createdPostIds.length) return;
   const db = isolatedDatabase(info);
