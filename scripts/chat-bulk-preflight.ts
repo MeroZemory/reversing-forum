@@ -25,9 +25,7 @@ import {
 // Explicit snapshots are operator-provided public-only exports, NOT live-state proof.
 // prepare --manifest FILE (--db FILE | --snapshot FILE) --out data/.../prepared.json
 // resolve --manifest FILE (--db FILE | --snapshot FILE) --prepared FILE
-//         --prepared-hash HEX64 --judgments FILE --out data/.../resolved.json
-// Preserve prepare stdout.preparedHash in an independent execution record;
-// never obtain the trusted --prepared-hash from the prepared file being checked.
+//         --judgments FILE --out data/.../resolved.json
 // Judgments FILE is an array of BatchJudgment objects, one per prepared.packets.
 const read = (path: string): unknown => JSON.parse(readFileSync(path, "utf8"));
 
@@ -98,7 +96,6 @@ export async function main(argv: string[]) {
         "--snapshot",
         "--out",
         "--prepared",
-        "--prepared-hash",
         "--judgments",
       ].includes(key) ||
       !value ||
@@ -114,12 +111,8 @@ export async function main(argv: string[]) {
     !options.has("--out") ||
     options.has("--db") === options.has("--snapshot") ||
     (command === "resolve"
-      ? !options.has("--prepared") ||
-        !options.has("--judgments") ||
-        !/^[a-f0-9]{64}$/i.test(options.get("--prepared-hash") ?? "")
-      : options.has("--prepared") ||
-        options.has("--judgments") ||
-        options.has("--prepared-hash"))
+      ? !options.has("--prepared") || !options.has("--judgments")
+      : options.has("--prepared") || options.has("--judgments"))
   )
     throw new Error("usage-bulk-preflight-prepare-or-resolve");
   const manifestPath = resolve(options.get("--manifest")!);
@@ -165,13 +158,7 @@ export async function main(argv: string[]) {
       throw new Error("update-mapping-changed");
     const judgments = read(resolve(options.get("--judgments")!));
     if (!Array.isArray(judgments)) throw new Error("invalid-judgment-file");
-    result = resolveBulk(
-      prepared,
-      judgments,
-      candidates,
-      snapshot,
-      options.get("--prepared-hash")!,
-    );
+    result = resolveBulk(prepared, judgments, candidates, snapshot);
   }
   const out = privateOutput(options.get("--out")!);
   const snapshotSource = options.has("--db")
@@ -186,9 +173,6 @@ export async function main(argv: string[]) {
   console.log(
     JSON.stringify({
       output: out,
-      ...(command === "prepare"
-        ? { preparedHash: (result as Prepared).preparedHash }
-        : {}),
       independentPreflightOnly: true,
       siteGateProof: false,
       snapshotSource,

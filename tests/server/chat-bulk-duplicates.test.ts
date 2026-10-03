@@ -213,7 +213,7 @@ const resolveAt = (
   j: unknown[],
   c: Candidate[],
   posts: PublicDocument[],
-) => resolveBulk(p, j, c, snapshot(posts), p.preparedHash, now);
+) => resolveBulk(p, j, c, snapshot(posts), now);
 function rehashPrepared(p: Prepared) {
   for (const plan of p.plan) {
     if (plan.item)
@@ -615,44 +615,23 @@ describe("independent bulk preflight", () => {
       resolveAt(prepared, j, c, posts).entries.map((e) => e.action),
     ).toEqual(["accept", "hold", "hold", "accept"]);
   });
-  it("재해시한 empty 계획 변조는 외부 신뢰 해시와 비교대상 구조 검사 양쪽에서 거부합니다", async () => {
+  it("검사 없는 계획으로 바꾸면 준비 파일의 무결성 및 비교대상 구조 검사에서 거부합니다", async () => {
     const c = [candidate("a", "새 내용"), candidate("b", "다음 내용")],
       posts = [post("P", "기존 내용")];
-    const { prepared } = await prepare(c, posts),
-      trustedHash = prepared.preparedHash;
+    const { prepared } = await prepare(c, posts);
     const changed = JSON.parse(JSON.stringify(prepared)) as Prepared;
     changed.plan = c.map((c) => ({
       candidateKey: c.candidateKey,
       mode: "empty",
     }));
     changed.packets = [];
+    expect(() => resolveBulk(changed, [], c, snapshot(posts), now)).toThrow(
+      "preflight-snapshot-mismatch",
+    );
     rehashPrepared(changed);
-    expect(() =>
-      resolveBulk(changed, [], c, snapshot(posts), trustedHash, now),
-    ).toThrow("preflight-trusted-hash-mismatch");
-    expect(() =>
-      resolveBulk(changed, [], c, snapshot(posts), changed.preparedHash, now),
-    ).toThrow("invalid-prepared-plan");
-    expect(() =>
-      resolveBulk(
-        prepared,
-        judgment(prepared),
-        c,
-        snapshot(posts),
-        undefined as unknown as string,
-        now,
-      ),
-    ).toThrow("preflight-trusted-hash-mismatch");
-    expect(() =>
-      resolveBulk(
-        prepared,
-        judgment(prepared),
-        c,
-        snapshot(posts),
-        "0".repeat(64),
-        now,
-      ),
-    ).toThrow("preflight-trusted-hash-mismatch");
+    expect(() => resolveBulk(changed, [], c, snapshot(posts), now)).toThrow(
+      "invalid-prepared-plan",
+    );
   });
   it("재해시하더라도 계획 순서와 NEW 전체 본문 및 OLD 실제 문서의 구조 불일치를 거부합니다", async () => {
     const c = [
@@ -755,15 +734,7 @@ describe("independent bulk preflight", () => {
       mutate(changed);
       rehashPrepared(changed);
       expect(
-        () =>
-          resolveBulk(
-            changed,
-            judgment(changed),
-            c,
-            snapshot(posts),
-            changed.preparedHash,
-            now,
-          ),
+        () => resolveBulk(changed, judgment(changed), c, snapshot(posts), now),
         name,
       ).toThrow("invalid-prepared-plan");
     }
@@ -967,7 +938,6 @@ describe("independent bulk preflight", () => {
         judgment(prepared),
         c,
         snapshot(posts),
-        prepared.preparedHash,
         now + BOUNDS.snapshotAgeMs + 1,
       ),
     ).toThrow("stale-public-snapshot");
@@ -979,14 +949,8 @@ describe("independent bulk preflight", () => {
     const later = now + BOUNDS.snapshotAgeMs * 4;
     const current = { capturedAt: new Date(later).toISOString(), posts };
     expect(
-      resolveBulk(
-        prepared,
-        judgment(prepared),
-        c,
-        current,
-        prepared.preparedHash,
-        later,
-      ).entries[0].action,
+      resolveBulk(prepared, judgment(prepared), c, current, later).entries[0]
+        .action,
     ).toBe("accept");
     expect(() =>
       resolveBulk(
@@ -994,19 +958,11 @@ describe("independent bulk preflight", () => {
         judgment(prepared),
         c,
         { ...current, posts: [post("old", "changed condition")] },
-        prepared.preparedHash,
         later,
       ),
     ).toThrow("preflight-snapshot-mismatch");
     expect(() =>
-      resolveBulk(
-        prepared,
-        judgment(prepared),
-        c,
-        snapshot(posts),
-        prepared.preparedHash,
-        later,
-      ),
+      resolveBulk(prepared, judgment(prepared), c, snapshot(posts), later),
     ).toThrow("stale-public-snapshot");
   });
   it("binds the reviewed result itself even when the approved public body is unchanged", async () => {
@@ -1079,7 +1035,7 @@ describe("readonly CLI boundary", () => {
     directories.push(d);
     return d;
   };
-  it("prepare stdout의 해시를 별도 실행 기록으로 전달하고 누락 및 재해시한 파일 변조를 거부합니다", async () => {
+  it("별도 해시 입력 없이 묶음 판정을 적용하고 비교를 생략한 준비 파일은 거부합니다", async () => {
     const original = process.cwd(),
       d = temporary();
     const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1106,14 +1062,9 @@ describe("readonly CLI boundary", () => {
         "snapshot.json",
       ];
       await main(["prepare", ...inputs, "--out", "data/prepared.json"]);
-      const executionRecord = JSON.parse(
-        stdout.mock.calls.at(-1)![0] as string,
-      ) as { preparedHash: string };
-      expect(executionRecord.preparedHash).toMatch(/^[a-f0-9]{64}$/);
       const prepared = JSON.parse(
         readFileSync("data/prepared.json", "utf8"),
       ) as Prepared;
-      expect(prepared.preparedHash).toBe(executionRecord.preparedHash);
       writeFileSync(
         "judgments.json",
         JSON.stringify(judgment(prepared, "distinct")),
@@ -1126,25 +1077,7 @@ describe("readonly CLI boundary", () => {
         "--judgments",
         "judgments.json",
       ];
-      await expect(
-        main([...args, "--out", "data/missing-hash.json"]),
-      ).rejects.toThrow("usage-bulk-preflight-prepare-or-resolve");
-      await expect(
-        main([
-          ...args,
-          "--prepared-hash",
-          "invalid",
-          "--out",
-          "data/invalid-hash.json",
-        ]),
-      ).rejects.toThrow("usage-bulk-preflight-prepare-or-resolve");
-      await main([
-        ...args,
-        "--prepared-hash",
-        executionRecord.preparedHash,
-        "--out",
-        "data/resolved.json",
-      ]);
+      await main([...args, "--out", "data/resolved.json"]);
       expect(
         JSON.parse(readFileSync("data/resolved.json", "utf8")).entries[0]
           .action,
@@ -1155,20 +1088,9 @@ describe("readonly CLI boundary", () => {
       writeFileSync("data/prepared.json", JSON.stringify(prepared));
       writeFileSync("judgments.json", "[]");
       await expect(
-        main([
-          ...args,
-          "--prepared-hash",
-          executionRecord.preparedHash,
-          "--out",
-          "data/tampered.json",
-        ]),
-      ).rejects.toThrow("preflight-trusted-hash-mismatch");
-      for (const file of [
-        "missing-hash.json",
-        "invalid-hash.json",
-        "tampered.json",
-      ])
-        expect(existsSync(join("data", file))).toBe(false);
+        main([...args, "--out", "data/tampered.json"]),
+      ).rejects.toThrow("invalid-prepared-plan");
+      expect(existsSync(join("data", "tampered.json"))).toBe(false);
     } finally {
       stdout.mockRestore();
       process.chdir(original);
@@ -1233,8 +1155,6 @@ describe("readonly CLI boundary", () => {
         "snapshot.json",
         "--prepared",
         "prepared.json",
-        "--prepared-hash",
-        prepared.preparedHash,
         "--judgments",
         "judgments.json",
         "--out",
@@ -1296,8 +1216,6 @@ describe("readonly CLI boundary", () => {
           "snapshot.json",
           "--prepared",
           "prepared.json",
-          "--prepared-hash",
-          prepared.preparedHash,
           "--judgments",
           "judgments.json",
           "--out",

@@ -206,8 +206,8 @@ function checkUpdates(
 }
 
 // Validate the prepared comparison without rerunning retrieval, tokenization or models.
-// The caller's independent hash authenticates the plan; these checks bind its structure
-// to the current complete corpus and the ordered reviewed candidates.
+// Bind its structure to the current complete corpus and the ordered reviewed
+// candidates. This private preflight never replaces the live publication gate.
 function validatePlan(prepared: Prepared, snapshot: PublicSnapshot) {
   const fail = () => {
     throw new Error("invalid-prepared-plan");
@@ -579,17 +579,8 @@ export function resolveBulk(
   judgments: unknown[],
   currentCandidates: Candidate[],
   rawSnapshot: unknown,
-  trustedPreparedHash: string,
   now = Date.now(),
 ) {
-  if (
-    typeof trustedPreparedHash !== "string" ||
-    !/^[a-f0-9]{64}$/i.test(trustedPreparedHash) ||
-    prepared.preparedHash !== trustedPreparedHash.toLowerCase() ||
-    digest(withoutHash(prepared, "preparedHash")) !==
-      trustedPreparedHash.toLowerCase()
-  )
-    throw new Error("preflight-trusted-hash-mismatch");
   const snapshot = validateSnapshot(rawSnapshot, now);
   if (
     prepared.version !== QUESTION_VERSION ||
