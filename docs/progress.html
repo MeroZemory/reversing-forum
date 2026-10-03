@@ -863,10 +863,13 @@
         </p>
         <div class="meta">
           <div>
-            <b>운영 관측</b> 2026-10-04 03:42 KST · 공개 37개 전체 본문 보존
+            <b>운영 관측</b> 2026-10-04 04:56 KST · 공개 37개 전체 본문 보존
           </div>
-          <div><b>코드 검증</b> 최신 관련 232개 · 타입·검증 빌드 종료 0</div>
-          <div><b>운영 코드</b> <code>b6004fa</code> · 03:25 KST 배포</div>
+          <div><b>코드 검증</b> 최신 관련 126개 · 타입·검증 빌드 종료 0</div>
+          <div>
+            <b>운영 코드</b> <code>b6004fa</code> · 자료 가공 도구
+            <code>e25e072</code>
+          </div>
           <div>
             <b>문서 재작성</b> 2026-10-03 18:30 KST · inside-things 작성법 적용
           </div>
@@ -908,11 +911,12 @@
             <h3>지금 읽을 수 있는 것</h3>
             <p>
               공개 글 37개, 편집 자료의 출처·공유 범위 안내, 회원의 신고·삭제
-              요청 경로입니다. 보류 7개는 비회원에게 404로 숨겨집니다.
+              요청 경로입니다. 기존 44개 표본의 품질 보류 7개는 비회원에게 404로
+              숨겨집니다.
             </p>
             <p>
               <a
-                href="../data/editorial-readability-20261003/evidence-context/live-public.private.json"
+                href="../data/editorial-readability-20261003/evidence-context/context-reference-live.private.json"
                 >전체 운영 본문 대조</a
               >
               ·
@@ -951,7 +955,7 @@
           </article>
         </div>
         <p class="note">
-          운영 확인: 2026-10-04 03:42 KST. Google 로그인은 사용자 확인과 실제
+          운영 확인: 2026-10-04 04:56 KST. Google 로그인은 사용자 확인과 실제
           세션 근거로 완료했습니다. 이메일 인증 결과 화면 수정과 HTML 메일은
           배포됐습니다. 인증된 계정의 재요청에는 새 메일을 보내지 않습니다. 스팸
           분류 개선과 원격 백업 복구는 별도 확인이 남아 있습니다.
@@ -989,25 +993,37 @@
             보완했습니다. 18개 수정안의 최종 검토가 통과했으며 아직 게시하지
             않았습니다.
           </li>
+          <li>
+            문맥이 복구된 같은 후보가 편집 입력으로 넘어가는 경로를 실제 명령과
+            격리된 합성 자료로 확인했습니다. 기존 복구 구현을 다시 만들거나 전체
+            자료를 재처리하지 않았습니다.
+          </li>
+          <li>
+            원자료에서 빠진 링크를 비공개로 확인하고, 운영자가 검토한 공개
+            기술자료만 편집자 보충에 연결하는 도구를 구현했습니다. URL·인증값
+            제거 오류와 닉네임의 대소문자 변형 누락을 고쳤습니다. 자료 가공 코드
+            <code>e25e072</code>까지 푸시했습니다.
+          </li>
         </ul>
         <p>
-          Sol과 Astra의 코드 독립 검토를 마쳤습니다. 최신 관련 검사 4개
-          파일·232개, 타입 검사와 검증 빌드는 각각 종료 코드 0입니다. 과거 전체
-          서버 검사 696개와 합산하지 않습니다.
+          Sol과 Astra가 수정 결과를 독립 검토하고 상호 합의했습니다. 최신 관련
+          검사 5개 파일·126개, 타입 검사·포맷 검사·검증 빌드가 모두 종료 코드
+          0입니다. 앞선 232개와 과거 전체 서버 검사 696개는 다른 범위의 기록이며
+          합산하지 않습니다.
         </p>
         <p>
           <a
-            href="../data/editorial-readability-20261003/evidence-context/final-related-tests.log"
+            href="../data/editorial-readability-20261003/evidence-context/context-reference-final-tests.log"
             >관련 검사</a
           >
           ·
           <a
-            href="../data/editorial-readability-20261003/evidence-context/post-build-typecheck.log"
+            href="../data/editorial-readability-20261003/evidence-context/context-reference-typecheck.log"
             >타입 검사</a
           >
           ·
           <a
-            href="../data/editorial-readability-20261003/evidence-context/build.log"
+            href="../data/editorial-readability-20261003/evidence-context/context-reference-build.log"
             >검증 빌드</a
           >
           ·
@@ -1126,6 +1142,31 @@
         </div>
         <details id="latest-records">
           <summary>최신 근거와 앞선 실행 기록</summary>
+          <p id="latest-reference-flow">
+            2026-10-04 04:56 KST: 자료 가공 도구의 문맥 복구→편집 경로와 비공개
+            참조 확인→보충 입력 연결을 검증했습니다. 수정안 18개에는 원본 참조가
+            없었고, 후속 후보 72개에는 안전 조건을 통과한 참조 1개가 있었습니다.
+            제외한 URL 8개는 값 자체를 기록하지 않았습니다. 해당 공개 기술자료의
+            설명 범위는 확인했지만 새 보충본 출력은 0/1이며, 글 게시도
+            0개입니다. 운영 공개 37개 전체의 제목·본문·태그가 기존 승인본과
+            일치하고 모든 비공개 글은 비회원 요청에 404를 반환했습니다. 기존
+            44개 표본의 품질 보류 7개와 운영 DB의 전체 비공개 28개는 다른
+            범위입니다.
+            <a
+              href="../data/editorial-readability-20261003/evidence-context/context-reference-validation.private.json"
+              >최종 검증·독립 합의·종료 근거</a
+            >
+            ·
+            <a
+              href="../data/editorial-readability-20261003/evidence-context/context-reference-live.private.json"
+              >운영 공개 전체 대조</a
+            >
+            ·
+            <a
+              href="../data/editorial-readability-20261003/evidence-context/coverage.private.json"
+              >전체 원자료의 미처리 범위</a
+            >.
+          </p>
           <p id="latest-public-value">
             2026-10-04 03:42 KST: 현재 공개 37개를 보존했고 새 수정안 18개는
             비공개 검토 완료입니다.
@@ -1577,7 +1618,7 @@
           전체의 완료를 기다리지 않습니다.
         </p>
         <p class="note">
-          상태 기준: 2026-10-04 03:42 KST. 기존 공개 37개·새 수정안 18개, 후속
+          상태 기준: 2026-10-04 04:56 KST. 기존 공개 37개·새 수정안 18개, 후속
           후보 296개, 전체 원자료의 준비된 2009개 묶음을 구분합니다. 후속 검토
           집계는 10/03 23:14 KST 정본입니다. 준비는 전체 처리 완료와 다릅니다.
         </p>
@@ -1928,9 +1969,9 @@
                     marker-end="url(#technical-arrow)"
                   >
                     <title>
-                      비공개 ledger·출현 대응 · 참조 복원 설계 입력 · 제외된
-                      링크의 원래 위치와 범위를 확인합니다. 이 입력이 공개된다는
-                      뜻은 아닙니다.
+                      비공개 ledger·출현 대응 · 참조 확인 입력 · 제외된 링크의
+                      원래 위치와 범위를 확인합니다. 이 입력이 공개된다는 뜻은
+                      아닙니다.
                     </title>
                   </path>
                   <g class="lbl">
@@ -1951,9 +1992,10 @@
                     marker-end="url(#technical-arrow)"
                   >
                     <title>
-                      공개 가능한 참조 판정 · 제안: 참조 필수 후보만 · 복원
-                      출력·허용 기준·편집 연결이 추가돼야 합니다. 현재 결과
-                      파일을 가정하지 않습니다.
+                      운영자가 검토한 공개 출처의 보충 입력 · 참조가 필요한 해당
+                      후보만 · 비공개 확인과 실제 허용한 주소·제목·적용 조건을
+                      검사해 기존 --supplements에 넘깁니다. 원본 URL의 자동
+                      공개는 허용하지 않습니다.
                     </title>
                   </path>
                   <g class="lbl">
@@ -2251,7 +2293,7 @@
                   <text class="nf" x="886" y="323">→ eligible candidate</text>
                   <g class="chip partial">
                     <rect height="17" rx="4" width="164" x="884" y="330"></rect>
-                    <text x="889" y="342.2">전체 복구 미완료</text>
+                    <text x="889" y="342.2">복구→편집 확인·부분</text>
                   </g>
                 </a>
                 <a
@@ -2262,8 +2304,8 @@
                 >
                   <title>
                     입력: 비공개 ledger·원본 출현 대응, 최소화 중 링크를 제외한
-                    표시 / 출력: 제안: 공개 가능 참조 판정과 편집 입력의 참조
-                    필드; 현재 구현된 결과 파일은 없음
+                    표시 / 출력: 비공개 참조 확인과 검토한 공개 출처의 보충
+                    입력; 후속 72개 확인, 안전 참조 1개, 실제 보충 출력 0/1
                   </title>
                   <rect
                     class="nb"
@@ -2278,9 +2320,9 @@
                     허용 참조가 필요한 항목
                   </text>
                   <text class="nf" x="606" y="323">→ public reference</text>
-                  <g class="chip notrun">
+                  <g class="chip partial">
                     <rect height="17" rx="4" width="164" x="604" y="330"></rect>
-                    <text x="609" y="342.2">제안 계약 · 구현 미확인</text>
+                    <text x="609" y="342.2">72개 확인 · 0/1 연결</text>
                   </g>
                 </a>
                 <a
@@ -2702,12 +2744,13 @@
                       <td>
                         <span class="state verified">기록 확인</span>
                         <p>
-                          8cc6522의 문맥 완전 복구 시 보류 해제 구현과 전체
-                          586개 검사 통과를 확인했습니다. 같은 배치·입력/출력
-                          버전·대상 범위를 모두 덮는 복구만 인정하며 모호한
-                          연결과 후속 미해결은 보류합니다. 각 실제 후보는 집계
-                          needsContext=false를 확인한 뒤 편집합니다. 전체 복구
-                          완료와 구분합니다.
+                          기존 8cc6522의 완전 복구 시 보류 해제 구현을
+                          유지했습니다. 같은 배치·대상 전체를 덮는 복구 뒤 집계
+                          상태가 false로 바뀌고, 같은 후보와 발화 순서의 근거가
+                          실제 편집 입력에 포함되는 것을 dadfef0에서
+                          검증했습니다. 새 미해결 근거는 다시 보류됩니다. 최신
+                          관련 126개가 통과했으며 전체 원자료의 복구 완료와
+                          구분합니다.
                         </p>
                         <a href="../src/server/chat-pipeline/job-store.ts"
                           >src/server/chat-pipeline/job-store.ts:243</a
@@ -2717,35 +2760,52 @@
                         ><br /><a href="../scripts/chat-context-run.ts"
                           >scripts/chat-context-run.ts:497</a
                         >
+                        <br /><a
+                          href="../data/editorial-readability-20261003/evidence-context/context-reference-final-tests.log"
+                          >같은 후보의 복구→편집 검사</a
+                        >
                       </td>
                     </tr>
                     <tr id="technical-task-T6">
-                      <th scope="row">T6 공개 참조 복원 계약</th>
+                      <th scope="row">T6 공개 참조 복원</th>
                       <td>
                         <p>
-                          <strong>입력:</strong> 비공개 ledger·원본 출현 대응,
-                          최소화 중 링크를 제외한 표시
+                          <strong>입력:</strong> 활성 후보의 실제 질문·응답
+                          근거, 최소화된 메시지와 비공개 원본 위치 대응
                         </p>
                         <p>
-                          <strong>출력:</strong> 제안: 공개 가능 참조 판정과
-                          편집 입력의 참조 필드; 현재 구현된 결과 파일은 없음
+                          <strong>출력:</strong> 원문·닉네임 없는 비공개 참조
+                          확인 파일, 운영자가 검토한 공개 기술자료의
+                          제목·주소·적용 조건을 담은 보충 입력
                         </p>
                         <p>
-                          <strong>착수:</strong> 기존 비공개 대응으로 계약과
-                          허용 기준을 설계합니다. 참조가 필요 없는 후보는
-                          기다리지 않습니다.
+                          <strong>착수:</strong> 문맥과 근거가 갖춰진 해당
+                          후보부터 확인합니다. 참조가 필요 없는 후보는 기다리지
+                          않습니다.
                         </p>
                       </td>
                       <td>
-                        <span class="state blocked">조건 차단</span>
+                        <span class="state partial"
+                          >코드 완료 · 실제 연결 부분</span
+                        >
                         <p>
-                          링크 제외는 구현돼 있습니다. 복원 결과 형식·편집
-                          연결은 미구현이며 현재 작성 지시의 원본 URL 금지와
-                          조정해야 합니다.
+                          2026-10-04 04:56 KST: 후속 72개 확인·안전 참조
+                          1개·위험 URL 8개 제외, 실제 보충 출력 0/1입니다.
+                          수정안 18개에서는 원본 참조가 없었습니다. 출력 도구는
+                          기존 <code>--supplements</code>에 연결되며 합성 자료로
+                          검증했습니다. 원본 URL을 자동 공개하거나 접속하지
+                          않습니다. 자료 가공 도구 e25e072의 독립 합의와 관련
+                          126개·타입·빌드 통과를 확인했습니다.
                         </p>
-                        <a href="../src/server/chat-pipeline/prepare.ts"
-                          >src/server/chat-pipeline/prepare.ts:99</a
-                        ><br /><a href="../TODO.md">TODO.md:67</a>
+                        <a
+                          href="../src/server/chat-pipeline/editorial-references.ts"
+                          >참조 확인·보충 형식 변환</a
+                        ><br /><a href="../scripts/chat-editorial-references.ts"
+                          >비공개 실행 명령</a
+                        ><br /><a
+                          href="../data/editorial-readability-20261003/evidence-context/context-reference-validation.private.json"
+                          >검증·실제 실행 범위</a
+                        >
                       </td>
                     </tr>
                     <tr id="technical-task-T13">
@@ -3111,7 +3171,7 @@
                       <td>T2 → T6</td>
                       <td>
                         비공개 ledger·출현 대응
-                        <p>참조 복원 설계 입력</p>
+                        <p>참조 확인 입력</p>
                       </td>
                       <td>
                         제외된 링크의 원래 위치와 범위를 확인합니다. 이 입력이
@@ -3128,14 +3188,18 @@
                       <td>T6 → T7</td>
                       <td>
                         공개 가능한 참조 판정
-                        <p>제안: 참조 필수 후보만</p>
+                        <p>검토한 공개 출처 · 참조가 필요한 후보만</p>
                       </td>
                       <td>
-                        복원 출력·허용 기준·편집 연결이 추가돼야 합니다. 현재
-                        결과 파일을 가정하지 않습니다.<br /><a
-                          href="../src/server/chat-pipeline/prepare.ts"
-                          >src/server/chat-pipeline/prepare.ts:99</a
-                        ><br /><a href="../TODO.md">TODO.md:67</a>
+                        비공개 확인 결과와 운영자가 실제 검토한 제목·주소·적용
+                        조건을 검사해 기존 <code>--supplements</code>에
+                        넘깁니다. 새 본문은 기존 독립 검토와 게시 조건을
+                        따릅니다.<br /><a
+                          href="../src/server/chat-pipeline/editorial-references.ts"
+                          >참조 확인과 보충 입력</a
+                        ><br /><a href="../scripts/chat-editorial-references.ts"
+                          >실행 명령</a
+                        >
                       </td>
                     </tr>
                     <tr>
@@ -4723,9 +4787,10 @@
                     공개 보고에 포함하지 않습니다.
                   </td>
                   <td>
-                    공개 허용 참조의 결과 형식과 편집 연결을 정합니다. TODO에는
-                    남아 있으며 실제 구현 착수·결과는 이번 조사에서 확인하지
-                    않았습니다.
+                    후속 72개를 실제로 확인해 안전 참조 1개를 찾았습니다. 비공개
+                    확인·허용 결정·기존 보충 입력으로의 연결은
+                    구현·검증했습니다. 이 참조를 사용할 새 보충본의 작성·독립
+                    검토는 남아 있으며 실제 보충 출력은 0/1입니다.
                   </td>
                   <td>
                     <a href="#technical-task-T7">T7 작성</a>: 참조가 필요한
@@ -4739,12 +4804,12 @@
                     기존 outputs/후보/미해결 대상과 jobs의 주변 최소화 근거
                   </td>
                   <td>
-                    8cc6522에서 완전 복구에 한정한 보류 해제 구현·검수를
-                    마쳤습니다. 같은 버전의 실제 집계 false와 근거가 편집의
-                    입력입니다. 기존 44개 품질 점검과 37개 통합을 마쳐 후속
-                    가공을 재개했습니다. 부족한 문맥 확인은 준비된 대상부터
-                    병행하고, 전체 후속 가공본의 독립 검토·벌크 검사 뒤에 추가
-                    게시합니다.
+                    8cc6522의 보류 해제 구현에 이어 dadfef0에서 같은 후보의 실제
+                    편집 입력 전달까지 검증했습니다. 같은 버전의 실제 집계
+                    false와 근거가 편집의 입력입니다. 기존 44개 품질 점검과 37개
+                    통합을 마쳐 후속 가공을 재개했습니다. 부족한 문맥 확인은
+                    준비된 대상부터 병행하고, 전체 후속 가공본의 독립 검토·벌크
+                    검사 뒤에 추가 게시합니다.
                   </td>
                   <td>
                     <a href="#technical-task-T7">T7 작성</a>: 같은 입력·출력
@@ -4764,8 +4829,8 @@
                     세션으로 보류했습니다. 운영 공개는 37개이며 보류 7개의
                     비회원 404를 확인했습니다. 승인된 최종본 37개의 벌크 중복
                     검수와 운영 본문 갱신은 완료했고, 승인본 일치·123개 화면
-                    검수도 통과했습니다. 후속 작성 가능 후보 296개를 새
-                    프롬프트로 가공 중이며, 새 글 추가는 0개입니다.
+                    검수도 통과했습니다. 후속 296개는 후보 72개·보류 224개로
+                    검토를 마쳤으며, 새 글 추가는 0개입니다.
                   </td>
                   <td>
                     <a href="#technical-task-T8">T8 정규화</a>·<a
