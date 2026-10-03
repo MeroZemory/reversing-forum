@@ -16,3 +16,5 @@ data/
 playwright-report/
 test-results/
 .next-auth-followup/
+# Automatic session notes can contain private inputs or credentials.
+/codex-session-*.md
