@@ -382,6 +382,26 @@ describe("비공개 대화 배치 작업", () => {
       }).batches[0].state,
     ).toBe("local-review");
   });
+  it("URL을 개인 드라이브 경로로 오인하지 않고 링크와 로컬 경로를 각각 제거한다", () => {
+    const safe = sanitizeText(
+      "문서 https://docs.example.org/debugging http://docs.example.org/file www.example.org/manual C:\\Users\\person\\notes.txt S:/private/file",
+      new Map(),
+    );
+    expect(safe.text).toBe(
+      "문서 [링크 제거] [링크 제거] [링크 제거] [개인 경로 제거] [개인 경로 제거]",
+    );
+    expect(safe.held).toBe(false);
+  });
+  it("인증 헤더의 짧은 Basic 값과 Bearer 값도 모델 입력에서 제거한다", () => {
+    const safe = sanitizeText(
+      "연습 Authorization: Basic dXNlcjpwYXNz 다음 항목\nProxy-Authorization: Basic Zm9vOmJhcg==\nAuthorization: Bearer example-token",
+      new Map(),
+    );
+    expect(safe.text).toBe(
+      "연습 [인증값 제거] 다음 항목\n[인증값 제거]\n[인증값 제거]",
+    );
+    expect(safe.held).toBe(false);
+  });
   it("민감값을 최소화하고 잔존 의심은 보류하며 지시는 자료로 둔다", () => {
     const safe = sanitizeText(
       "@가람 a@example.test 010-1234-5678 C:\\Users\\person\\secret.txt https://example.test/private?token=secret api_key=abcdefgh",

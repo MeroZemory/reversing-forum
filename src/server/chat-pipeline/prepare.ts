@@ -83,6 +83,10 @@ export function sanitizeText(text: string, names: ReadonlyMap<string, string>) {
       "[비밀값 제거]",
     )
     .replace(
+      /\b(?:proxy-)?authorization\s*:\s*(?:Basic|Bearer)\s+\S+/gi,
+      "[인증값 제거]",
+    )
+    .replace(
       /\b(?:Bearer\s+\S+|(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/gi,
       "[토큰 제거]",
     )
@@ -92,12 +96,13 @@ export function sanitizeText(text: string, names: ReadonlyMap<string, string>) {
       "[전화번호 제거]",
     )
     .replace(/\b\d{6}[ -]?[1-4]\d{6}\b/g, "[식별번호 제거]")
+    // Handle URLs before drive paths: the `s:/` in HTTPS is not a local drive.
+    // References stay local and are inspected separately, never fetched here.
+    .replace(/(?:https?:\/\/|www\.)[^\s<>"']+/gi, "[링크 제거]")
     .replace(
       /(?:[A-Za-z]:[\\/]|\\\\)[^\s<>"']+|\/(?:Users|home)\/[^\s<>"']+/g,
       "[개인 경로 제거]",
     )
-    // URLs are not fetched. Conservatively omit even technical links in worker inputs.
-    .replace(/(?:https?:\/\/|www\.)[^\s<>"']+/gi, "[링크 제거]")
     .replace(
       /(?:password|passwd|secret|api[_ -]?key|access[_ -]?token|비밀번호|인증키|비밀키)\s*[:=]\s*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)/gi,
       "[비밀값 제거]",
