@@ -1,8 +1,9 @@
 export const qualityPolicyVersion = "reusable-technical-knowledge-v4";
-export const editorialPromptVersion = "editorial-reusable-knowledge-v9";
+export const editorialPromptVersion = "editorial-reusable-knowledge-v10";
 
 // Shared by drafting and independent review. Meaning takes priority over style.
 export const editorialQualityInstruction =
+  "각 항목을 독립적으로 처리하세요. 해당 항목의 evidence 또는 original.evidence만 근거로 삼고, 같은 배치의 다른 항목에 있는 본문, 공개본, 대상과 근거를 가져오지 마세요. 비슷한 주제라도 항목 사이에서 빠진 조건이나 답변을 메우지 마세요. " +
   "후보의 title, topic, uncertainties는 가공 메타데이터이며 근거가 아닙니다. evidence에 있는 기술 내용만 사용하세요. 원자료에 없는 대상, 답, 명령, 원인, 성공, 동의, 인물, 예시를 만들거나 외부 지식으로 메우지 마세요. 중요한 대상, 버전과 환경 조건, 가설성, 불확실성, 기술적 제약은 보존하세요. " +
   "글은 대화 이력이 아니라 다시 쓸 기술 지식 또는 명확한 미해결 질문입니다. 대상 프로그램과 도구, 구체적인 증상이나 논점, 질문과 응답의 연결, 필수 첨부 없이 이해되는지를 검토하세요. 이해에 필요한 대상이 불명확하거나 필수 이미지가 없거나 추측이 필요하면 quality:false입니다. 예외 설정 문제의 대상을 OllyDbg라고 추정하지 마세요. pthread_join 같은 개념 질문에 불필요한 실행 파일명이나 버전을 요구하지 마세요. needsContext:true는 보류하세요. 부분 답변은 근거와 적용 범위가 명확한 내용만 허용합니다. 틀리거나 연결이 불명확한 응답, 약어 혼선, 주변 대화는 제외하세요. 일반 검색 조언이나 도구 이름과 방법 나열만 남거나 핵심 지식을 남길 수 없으면 보류하세요. " +
   "첫 문장에 근거가 있는 답이나 논점을 밝히고, 의미별로 1~3문장 문단과 빈줄을 사용하세요. 제목이 표현하는 중심 논점에 필요한 기술 내용만 남기고, 함께 등장했다는 이유로 무관한 다른 주제를 섞지 마세요. 제외한 별도 논점은 비공개 reasons에 기록하세요. 순서가 있는 절차는 1. 목록, 병렬 조건이나 관찰은 - 목록으로 정리하세요. 짧은 글과 한 문장 질문에 길이, 공통 소제목, 필수 목록을 강요하지 마세요. 명확한 미해결 질문은 짧게 그대로 허용하며 답을 발명하지 마세요. 제목은 내용에 맞는 구체적인 논점이며 답이 없는데 해결한 듯 단정하지 마세요. " +
