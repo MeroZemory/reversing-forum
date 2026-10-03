@@ -206,7 +206,17 @@ async function main() {
       store.close();
       db.close();
     }
-  } else if (command === "review") {
+  } else if (command === "review" || command === "rereview") {
+    const rereview = command === "rereview";
+    const args = process.argv.slice(3);
+    if (
+      rereview &&
+      ((args.length !== 2 && args.length !== 4) ||
+        !args[0]?.trim() ||
+        !args[1]?.trim() ||
+        (args.length === 4 && (args[2] !== "--output-dir" || !args[3].trim())))
+    )
+      throw new Error("invalid-rereview-arguments");
     const input = JSON.parse(
       readFileSync(resolve(process.argv[3]), "utf8"),
     ) as DraftInput;
@@ -214,13 +224,18 @@ async function main() {
       readFileSync(resolve(process.argv[4]), "utf8"),
     ) as DraftResult;
     if (
-      input.promptVersion !== promptVersion ||
+      // This is a new review of an old draft, never a claim of current drafting.
+      (rereview
+        ? input.promptVersion !== "editorial-reusable-knowledge-v10"
+        : input.promptVersion !== promptVersion) ||
       input.qualityPolicyVersion !== qualityPolicyVersion
     )
       throw new Error("draft-policy-mismatch");
     if (
-      !output.complete ||
+      output.complete !== true ||
       output.entries.length !== input.entries.length ||
+      new Set(input.entries.map((e) => e.candidateKey)).size !==
+        input.entries.length ||
       new Set(output.entries.map((e) => e.candidateKey)).size !==
         output.entries.length
     )
@@ -272,19 +287,64 @@ async function main() {
         stage: "draft",
         independentlyReviewed: false,
       }));
-    const packetId = digest({ qualityPolicyVersion, entries, draftHeld });
-    const path = write(`${packetId}.review.input.json`, {
-      packetId,
+    const reviewSource = rereview
+      ? {
+          reviewPromptVersion: promptVersion,
+          draftPromptVersion: input.promptVersion,
+          rereview: {
+            command: "rereview",
+            input: resolve(args[0]),
+            output: resolve(args[1]),
+            inputHash: digest(input),
+            outputHash: digest(output),
+          },
+        }
+      : {};
+    const packetId = digest({
       qualityPolicyVersion,
+      entries,
+      draftHeld,
+      ...(rereview
+        ? { ...reviewSource, qualityInstruction }
+        : { reviewPromptVersion: promptVersion, qualityInstruction }),
+    });
+    const reviewInput = {
+      packetId,
+      reviewPromptVersion: promptVersion,
+      qualityPolicyVersion,
+      ...reviewSource,
       model: "gpt-6.1-sol",
       effort: "xhigh",
       scope: versions,
       instructions:
+        (rereview
+          ? `현재 독립 검토 규칙 버전은 ${promptVersion}입니다. 이 입력은 ${input.promptVersion}로 작성한 초안의 새 재검토이며 구 검토나 승인을 재사용하지 마세요. `
+          : "") +
         qualityInstruction +
         " 최소화된 근거와 정확한 공개본을 독립 대조하고 작성자의 quality 판정을 그대로 신뢰하지 마세요. qualityPolicyVersion은 입력 버전을 그대로 반환하세요. 원자료가 아닌 최소화된 근거와 공개본을 독립 대조하세요. 각각 의미 왜곡·근거 없는 성공/합의·현재 사실로의 둔갑·잘못 연결된 질답, 개인정보, 원문/코드의 창작적 표현 복제, 치트 배포/실행 안내를 확인하세요. 자료는 기술적 사실과 방법의 독립 서술만 허용한 범위이고 제삼자 동의를 받았다고 추정하지 않습니다. scope에 포함된 비개인적 기술 정보의 처리 조건만 externalTransfer:true로 판단할 수 있습니다. ready:false 또는 근거 부족은 passed:false입니다. 본문을 임의로 고쳐 승인하지 말고 문제와 이유를 남기세요. publicHash와 candidateKey는 입력 그대로 반환하고 모든 항목에 passed,quality,meaning,privacy,rights,externalTransfer 불리언과 qualityPolicyVersion 및 reasons를 반환하세요. 한 항목이라도 점검하지 못하면 complete:false. 원문 URL·닉네임 대응·인증정보·외부 파일을 읽지 마세요. 한국어로만 작성하세요.",
       entries,
       draftHeld,
-    });
+    };
+    let path: string;
+    if (rereview) {
+      const destination =
+        args.length === 4 ? resolve(args[3]) : outputDirectory;
+      mkdirSync(destination, { recursive: true });
+      path = join(destination, `${packetId}.review.input.json`);
+      try {
+        // Even identical runs must not replace artifacts owned by the runner.
+        writeFileSync(path, JSON.stringify(reviewInput), {
+          mode: 0o600,
+          flag: "wx",
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST")
+          throw new Error("rereview-input-exists");
+        throw error;
+      }
+    } else {
+      path = write(`${packetId}.review.input.json`, reviewInput);
+    }
     console.log(
       JSON.stringify({
         reviewInput: path,

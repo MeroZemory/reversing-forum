@@ -546,6 +546,7 @@ it.each([
   "editorial-qa-partial-v2",
   "editorial-reusable-knowledge-v6",
   "editorial-reusable-knowledge-v7",
+  "editorial-reusable-knowledge-v10",
 ])("rejects old draft cache %s and review packets", (oldPromptVersion) => {
   const f = fixture();
   try {
@@ -561,6 +562,336 @@ it.each([
       entries: [],
     });
     expect(() => f.run("bundle")).toThrow();
+  } finally {
+    f.close();
+  }
+});
+
+function rereviewFixture() {
+  const f = fixture();
+  const input = {
+    promptVersion: "editorial-reusable-knowledge-v10",
+    qualityPolicyVersion: policy,
+    entries: [
+      source(),
+      {
+        ...source(),
+        candidateKey: "other",
+        evidence: [{ id: "other-q", text: "서브루틴은 무엇인가요?" }],
+        questionIds: ["other-q"],
+        responseIds: [],
+      },
+    ],
+  };
+  const output = {
+    complete: true,
+    entries: input.entries
+      .map((entry) => ({
+        candidateKey: entry.candidateKey,
+        title:
+          entry.candidateKey === "other"
+            ? "서브루틴의 의미"
+            : "x64dbg 예외 전달 설정",
+        body:
+          entry.candidateKey === "other"
+            ? "서브루틴은 무엇인가요?"
+            : "대상에 예외를 전달하는 설정은 어떻게 확인하나요?",
+        tags: ["debugging"],
+        ready: true,
+        quality: true,
+        reasons: ["합성 초안 근거"],
+      }))
+      .reverse(),
+  };
+  const save = () => {
+    f.write("input.json", input);
+    f.write("output.json", output);
+  };
+  save();
+  return { ...f, input, output, save };
+}
+
+it("gives normal reviews a current-rule identity without overwriting legacy review inputs or outputs for identical bodies", () => {
+  const f = rereviewFixture();
+  try {
+    f.input.promptVersion = promptVersion;
+    f.save();
+    const initial = f.run("review");
+    const packet = f.read(initial.reviewInput);
+    const legacyId = digest({
+      qualityPolicyVersion: policy,
+      entries: packet.entries,
+      draftHeld: packet.draftHeld,
+    });
+    const legacyInput = `data/chat-pipeline/editorial-batches/${legacyId}.review.input.json`;
+    const legacyOutput = `data/chat-pipeline/editorial-batches/${legacyId}.review.output.json`;
+    const legacyPacket = {
+      ...packet,
+      packetId: legacyId,
+      reviewPromptVersion: "editorial-reusable-knowledge-v10",
+      instructions: "synthetic previous review rules",
+    };
+    const legacyVerdict = {
+      complete: true,
+      entries: ["synthetic previous verdict"],
+    };
+    f.write(legacyInput, legacyPacket);
+    f.write(legacyOutput, legacyVerdict);
+
+    const current = f.run("review");
+    expect(current).toEqual(initial);
+    expect(packet.reviewPromptVersion).toBe(promptVersion);
+    expect(packet.instructions).toContain(editorialQualityInstruction);
+    expect(packet.packetId).toBe(
+      digest({
+        qualityPolicyVersion: policy,
+        entries: packet.entries,
+        draftHeld: packet.draftHeld,
+        reviewPromptVersion: promptVersion,
+        qualityInstruction: editorialQualityInstruction,
+      }),
+    );
+    expect(packet.packetId).not.toBe(legacyId);
+    expect(current.reviewInput).not.toContain(`${legacyId}.review.input.json`);
+    expect(current.reviewOutput).not.toContain(
+      `${legacyId}.review.output.json`,
+    );
+    expect(f.read(legacyInput)).toEqual(legacyPacket);
+    expect(f.read(legacyOutput)).toEqual(legacyVerdict);
+    expect(f.read(current.reviewInput).entries).toEqual(legacyPacket.entries);
+  } finally {
+    f.close();
+  }
+});
+
+it("creates a fresh current-policy review of v10 drafts with isolated original evidence and immutable source attribution", () => {
+  const f = rereviewFixture();
+  try {
+    mkdirSync(join(f.directory, "editorial-batches"));
+    f.write("data/chat-pipeline/editorial-batches/manifest.json", {
+      packets: ["untouched"],
+    });
+    const beforeInput = readFileSync(resolve(f.directory, "../../input.json"));
+    const beforeOutput = readFileSync(
+      resolve(f.directory, "../../output.json"),
+    );
+    const result = f.run(
+      "rereview",
+      "input.json",
+      "output.json",
+      "--output-dir",
+      "private-rereview",
+    );
+    const packet = f.read(result.reviewInput);
+    expect(result.reviewInput).toContain("private-rereview");
+    expect(result.reviewOutput).toBe(
+      result.reviewInput.replace(".input.json", ".output.json"),
+    );
+    expect(packet).toMatchObject({
+      qualityPolicyVersion: policy,
+      reviewPromptVersion: promptVersion,
+      draftPromptVersion: "editorial-reusable-knowledge-v10",
+      rereview: {
+        command: "rereview",
+        inputHash: digest(f.input),
+        outputHash: digest(f.output),
+      },
+    });
+    expect(packet).not.toHaveProperty("promptVersion");
+    expect(packet.instructions).toContain(promptVersion);
+    expect(packet.instructions).toContain(editorialQualityInstruction);
+    expect(packet.instructions).toContain("original.evidence");
+    expect(packet.entries).toHaveLength(2);
+    expect(packet.draftHeld).toEqual([]);
+    for (const entry of packet.entries) {
+      expect(entry.original).toEqual(
+        f.input.entries.find(
+          (original) => original.candidateKey === entry.candidateKey,
+        ),
+      );
+      expect(entry.publicData.body).toBe(
+        f.output.entries.find(
+          (draft) => draft.candidateKey === entry.candidateKey,
+        )!.body,
+      );
+      expect(entry.publicHash).toBe(digest(entry.publicData));
+      expect(entry).not.toHaveProperty("passed");
+    }
+    expect(readFileSync(packet.rereview.input)).toEqual(beforeInput);
+    expect(readFileSync(packet.rereview.output)).toEqual(beforeOutput);
+    expect(
+      f.read("data/chat-pipeline/editorial-batches/manifest.json"),
+    ).toEqual({ packets: ["untouched"] });
+    const beforePacket = readFileSync(result.reviewInput);
+    expect(() =>
+      f.run(
+        "rereview",
+        "input.json",
+        "output.json",
+        "--output-dir",
+        "private-rereview",
+      ),
+    ).toThrow("rereview-input-exists");
+    expect(readFileSync(result.reviewInput)).toEqual(beforePacket);
+
+    // The same body under current drafting must have a distinct review identity.
+    f.input.promptVersion = promptVersion;
+    f.save();
+    const regular = f.read(f.run("review").reviewInput);
+    expect(regular.packetId).not.toBe(packet.packetId);
+    expect(regular.entries).toEqual(packet.entries);
+  } finally {
+    f.close();
+  }
+});
+
+it.each(["editorial-reusable-knowledge-v9", promptVersion, "unknown"])(
+  "limits rereview to the explicit v10 source version (%s)",
+  (version) => {
+    const f = rereviewFixture();
+    try {
+      f.input.promptVersion = version;
+      f.save();
+      expect(() => f.run("rereview")).toThrow("draft-policy-mismatch");
+      expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it("rejects a mismatched quality policy in rereview", () => {
+  const f = rereviewFixture();
+  try {
+    f.input.qualityPolicyVersion = "old-policy";
+    f.save();
+    expect(() => f.run("rereview")).toThrow("draft-policy-mismatch");
+  } finally {
+    f.close();
+  }
+});
+
+it("rejects truthy non-boolean completion in rereview", () => {
+  const f = rereviewFixture();
+  try {
+    f.write("output.json", { ...f.output, complete: "true" });
+    expect(() => f.run("rereview")).toThrow("incomplete-draft-batch");
+  } finally {
+    f.close();
+  }
+});
+
+it("rejects a changed rereview body against the independently returned snapshot hash", () => {
+  const f = rereviewFixture();
+  try {
+    const result = f.run("rereview");
+    const packet = f.read(result.reviewInput);
+    const review = {
+      complete: true,
+      entries: packet.entries.map(
+        (entry: { candidateKey: string; publicHash: string }) => ({
+          candidateKey: entry.candidateKey,
+          publicHash: entry.publicHash,
+          passed: true,
+          quality: true,
+          qualityPolicyVersion: policy,
+          meaning: true,
+          privacy: true,
+          rights: true,
+          externalTransfer: true,
+          reasons: [],
+        }),
+      ),
+    };
+    packet.entries[0].publicData.body = "검토 뒤 변경한 본문입니다.";
+    f.write("changed-review-input.json", packet);
+    f.write("synthetic-review-output.json", review);
+    expect(() =>
+      f.run(
+        "bundle",
+        "changed-review-input.json",
+        "synthetic-review-output.json",
+      ),
+    ).toThrow("review-snapshot-mismatch");
+    expect(readdirSync(join(f.directory, "editorial-batches"))).toEqual([
+      `${packet.packetId}.review.input.json`,
+    ]);
+  } finally {
+    f.close();
+  }
+});
+
+it.each([
+  "incomplete",
+  "missing",
+  "duplicate-output",
+  "duplicate-input",
+  "foreign",
+])(
+  "rejects incomplete or non-bijective rereview source batches (%s)",
+  (failure) => {
+    const f = rereviewFixture();
+    try {
+      if (failure === "incomplete") f.output.complete = false;
+      if (failure === "missing") f.output.entries.pop();
+      if (failure === "duplicate-output")
+        f.output.entries[1] = f.output.entries[0];
+      if (failure === "duplicate-input")
+        f.input.entries[1] = f.input.entries[0];
+      if (failure === "foreign") f.output.entries[0].candidateKey = "foreign";
+      f.save();
+      expect(() => f.run("rereview")).toThrow();
+      expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each(["quality", "ready", "context", "display"])(
+  "preserves draft and current display holds in rereview (%s)",
+  (failure) => {
+    const f = rereviewFixture();
+    try {
+      const draft = f.output.entries.find(
+        (entry) => entry.candidateKey === "synthetic",
+      )!;
+      if (failure === "quality") draft.quality = false;
+      if (failure === "ready") draft.ready = false;
+      if (failure === "context") f.input.entries[0].needsContext = true;
+      if (failure === "display") draft.body = "예외 설정이 제안됐습니다.";
+      f.save();
+      const packet = f.read(f.run("rereview").reviewInput);
+      expect(
+        packet.entries.map(
+          (entry: { candidateKey: string }) => entry.candidateKey,
+        ),
+      ).toEqual(["other"]);
+      expect(packet.draftHeld).toMatchObject([
+        {
+          candidateKey: "synthetic",
+          stage: "draft",
+          independentlyReviewed: false,
+        },
+      ]);
+    } finally {
+      f.close();
+    }
+  },
+);
+
+it.each([
+  ["input.json"],
+  ["input.json", "output.json", "extra"],
+  ["input.json", "output.json", "--other", "private"],
+  ["input.json", "output.json", "--output-dir", " "],
+])("rejects invalid rereview arguments %j", (...args) => {
+  const f = rereviewFixture();
+  try {
+    expect(() => f.run("rereview", ...args)).toThrow(
+      "invalid-rereview-arguments",
+    );
+    expect(readdirSync(f.directory)).toEqual(["processing-record.json"]);
   } finally {
     f.close();
   }
