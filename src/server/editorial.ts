@@ -252,11 +252,10 @@ function preview(d: Draft) {
     post: receipt(d) ?? null,
   };
 }
-function currentBasis(d: Draft): Basis {
+function currentBasis(): Basis {
   const b = db.prepare("SELECT * FROM editorial_basis WHERE id=1").get() as
     Basis | undefined;
-  if (!b?.allowed || b.versions !== JSON.stringify(versions(d)))
-    throw conflict();
+  if (!b?.allowed) throw conflict();
   return b;
 }
 function suppression(d: Draft): string {
@@ -286,7 +285,7 @@ function expected(d: Draft, data: Record<string, unknown>) {
     throw conflict();
 }
 function validReview(d: Draft, r: Review | null): boolean {
-  const b = currentBasis(d);
+  const b = currentBasis();
   return Boolean(
     r &&
     r.hash === d.hash &&
@@ -375,20 +374,23 @@ export async function editorialCollectionAction(value: unknown) {
           .get() as Basis | undefined;
         if (
           old?.versions !== JSON.stringify(tuple) ||
-          Boolean(old.allowed) !== data.allowed
+          Boolean(old?.allowed) !== data.allowed
         ) {
-          const drafts = (
-            db.prepare("SELECT state FROM editorial_drafts").all() as {
-              state: string;
-            }[]
-          ).map((r) => JSON.parse(r.state) as Draft);
-          invalidate(user, drafts, "basis");
+          const allowedChanged = old && Boolean(old.allowed) !== data.allowed;
+          if (allowedChanged) {
+            const drafts = (
+              db.prepare("SELECT state FROM editorial_drafts").all() as {
+                state: string;
+              }[]
+            ).map((r) => JSON.parse(r.state) as Draft);
+            invalidate(user, drafts, "basis");
+          }
           db.prepare(
             "INSERT INTO editorial_basis(id,versions,allowed,generation) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET versions=excluded.versions,allowed=excluded.allowed,generation=excluded.generation",
           ).run(
             JSON.stringify(tuple),
             data.allowed ? 1 : 0,
-            (old?.generation ?? 0) + 1,
+            old ? old.generation + (allowedChanged ? 1 : 0) : 1,
           );
           audit(user, "basis");
         }
@@ -569,7 +571,7 @@ export async function editorialAction(key: string, value: unknown) {
         return preview(d);
       }
       if (d.state === "withdrawn" || d.state === "published") throw conflict();
-      const basis = currentBasis(d);
+      const basis = currentBasis();
       if (action === "review") {
         const r = object(data.review, [
           "model",

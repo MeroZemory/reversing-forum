@@ -376,7 +376,7 @@ describe("editorial server gates and privacy", () => {
     await expect(action(a, "publish")).rejects.toMatchObject({ status: 409 });
     expect(forum.listPosts()).toEqual([]);
   });
-  it("checks limits, evidence structure, latest basis and review checks on the server", async () => {
+  it("checks limits, evidence structure, actual basis permission and review checks on the server", async () => {
     for (const patch of [
       { sourceAliases: ["raw source text"] },
       { publicData: { ...input().publicData, body: "x".repeat(30_001) } },
@@ -401,7 +401,7 @@ describe("editorial server gates and privacy", () => {
       action: "basis",
       ...tuple,
       rightsVersion: "rights-2",
-      allowed: true,
+      allowed: false,
     });
     await expect(action(d, "review", { review })).rejects.toMatchObject({
       status: 409,
@@ -583,10 +583,95 @@ describe("publication transactions and invalidation", () => {
     expect(next.post?.id).toBe(p.post?.id);
     expect(forum.listPosts()).toHaveLength(1);
   });
+  it.each(["basisVersion", "rightsVersion", "rulesVersion"] as const)(
+    "preserves drafts, approvals and published state when only %s changes",
+    async (version) => {
+      const published = await action(await approved(), "publish");
+      const pending = await approved("candidate-2");
+      const draftStates = db
+        .prepare("SELECT * FROM editorial_drafts ORDER BY candidate_key")
+        .all();
+      const suppressions = db
+        .prepare("SELECT * FROM editorial_suppression")
+        .all();
+      const { generation } = db
+        .prepare("SELECT generation FROM editorial_basis WHERE id=1")
+        .get() as { generation: number };
+      const updated = { ...tuple, [version]: "reference-2" };
+      await api.editorialCollectionAction({
+        action: "basis",
+        ...updated,
+        allowed: true,
+      });
+      expect(
+        db
+          .prepare("SELECT versions,generation FROM editorial_basis WHERE id=1")
+          .get(),
+      ).toEqual({ versions: JSON.stringify(updated), generation });
+      expect(
+        db
+          .prepare("SELECT * FROM editorial_drafts ORDER BY candidate_key")
+          .all(),
+      ).toEqual(draftStates);
+      expect(db.prepare("SELECT * FROM editorial_suppression").all()).toEqual(
+        suppressions,
+      );
+      expect(await api.getEditorial(published.candidateKey)).toEqual(published);
+      expect(forum.getPost(published.post!.id)?.status).toBe("published");
+      expect((await action(pending, "publish")).post?.status).toBe("published");
+    },
+  );
+  it.each([true, false])(
+    "initializes the first basis with allowed=%s",
+    async (allowed) => {
+      db.prepare("DELETE FROM editorial_basis").run();
+      await api.editorialCollectionAction({
+        action: "basis",
+        ...tuple,
+        allowed,
+      });
+      expect(
+        db
+          .prepare(
+            "SELECT versions,allowed,generation FROM editorial_basis WHERE id=1",
+          )
+          .get(),
+      ).toEqual({
+        versions: JSON.stringify(tuple),
+        allowed: allowed ? 1 : 0,
+        generation: 1,
+      });
+      const d = await ingest();
+      if (allowed)
+        expect((await action(d, "review", { review })).reviewed).toBe(true);
+      else
+        await expect(action(d, "review", { review })).rejects.toMatchObject({
+          status: 409,
+        });
+    },
+  );
+  it("accepts late Jev after reference-only changes", async () => {
+    const a = await approved();
+    const waiting = deferred();
+    screening.run.mockReturnValueOnce(waiting.promise);
+    const publishing = action(a, "publish");
+    await vi.waitFor(() => expect(screening.run).toHaveBeenCalledTimes(1));
+    await api.editorialCollectionAction({
+      action: "basis",
+      basisVersion: "basis-2",
+      rightsVersion: "rights-2",
+      rulesVersion: "rules-2",
+      allowed: true,
+    });
+    waiting.resolve({ status: "published", evidence: "late" });
+    expect((await publishing).post?.status).toBe("published");
+    expect(forum.listPosts()).toHaveLength(1);
+  });
   for (const change of [
     "withdraw",
     "revise",
     "basis",
+    "basis-restored",
     "review",
     "hold",
   ] as const) {
@@ -599,13 +684,19 @@ describe("publication transactions and invalidation", () => {
         status: 409,
       });
       await vi.waitFor(() => expect(screening.run).toHaveBeenCalledTimes(1));
-      if (change === "basis")
+      if (change === "basis" || change === "basis-restored") {
         await api.editorialCollectionAction({
           action: "basis",
           ...tuple,
           allowed: false,
         });
-      else if (change === "revise")
+        if (change === "basis-restored")
+          await api.editorialCollectionAction({
+            action: "basis",
+            ...tuple,
+            allowed: true,
+          });
+      } else if (change === "revise")
         await action(a, "revise", { draft: input("candidate-1", 2) });
       else if (change === "review") {
         const r = await action(a, "review", { review });
@@ -684,7 +775,7 @@ describe("publication transactions and invalidation", () => {
     ).toBe("published");
     expect((await api.getEditorial(p.candidateKey)).post?.status).toBe("held");
   });
-  it("basis changes hold published posts and restoring a tuple does not restore approval", async () => {
+  it("stopping processing holds published posts and reallowing does not restore approval", async () => {
     const p = await action(await approved(), "publish");
     await api.editorialCollectionAction({
       action: "basis",
@@ -713,11 +804,17 @@ describe("publication transactions and invalidation", () => {
       allowed: true,
     });
     const held = await api.getEditorial(p.candidateKey);
+    expect(
+      db.prepare("SELECT generation FROM editorial_basis WHERE id=1").get(),
+    ).toEqual({ generation: 3 });
+    expect(held.reviewed).toBe(false);
     expect(held.approved).toBe(false);
+    expect(held.screeningStatus).toBeNull();
     await expect(action(held, "approve")).rejects.toMatchObject({
       status: 409,
     });
     expect((await action(p, "publish")).post?.status).toBe("held");
+    expect(forum.listPosts()).toEqual([]);
     expect(
       JSON.stringify(db.prepare("SELECT * FROM editorial_audit").all()),
     ).not.toContain(input().publicData.body);
