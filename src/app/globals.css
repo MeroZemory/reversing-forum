@@ -1048,6 +1048,44 @@ svg {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
+.site-footer {
+  margin-top: var(--space-6);
+  padding-block: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+.guide-article h2 {
+  margin-top: var(--space-5);
+}
+.guide-article p {
+  margin-block: var(--space-4);
+  line-height: var(--leading-prose);
+}
+.report-form {
+  margin-top: var(--space-6);
+}
+.report-form .form-hint {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-prose);
+}
+.post-report-link {
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+}
+.operator-reports {
+  padding-left: var(--space-5);
+}
+.operator-reports li {
+  margin-block: var(--space-5);
+  overflow-wrap: anywhere;
+}
+.operator-reports h2 {
+  font-size: var(--text-base);
+}
+.report-detail {
+  white-space: pre-wrap;
+}
 .editorial-author {
   display: inline-flex;
   align-items: center;
@@ -1368,6 +1406,8 @@ svg {
   font-weight: var(--weight-semibold);
 }
 .stack-form label > input,
+.stack-form label > select,
+.stack-form label > textarea,
 .editor-label > input,
 .editor-label > textarea,
 .editor-label > .field-hint {
@@ -1375,6 +1415,8 @@ svg {
   width: 100%;
 }
 .stack-form input,
+.stack-form select,
+.stack-form textarea,
 .editor-form input:not([type="radio"]),
 .editor-form textarea,
 .comment-form textarea {

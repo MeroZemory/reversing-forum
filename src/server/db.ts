@@ -21,6 +21,12 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS comments_post_date ON comments(post_id, created_at);
   CREATE INDEX IF NOT EXISTS comments_author_date ON comments(author_id, created_at);
+  CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY, post_id TEXT REFERENCES posts(id),
+    reporter_id TEXT NOT NULL, reason TEXT NOT NULL, detail TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS reports_reporter_date ON reports(reporter_id, created_at);
   CREATE TABLE IF NOT EXISTS editorial_basis (
     id INTEGER PRIMARY KEY CHECK(id=1), versions TEXT NOT NULL,
     allowed INTEGER NOT NULL CHECK(allowed IN (0,1)), generation INTEGER NOT NULL

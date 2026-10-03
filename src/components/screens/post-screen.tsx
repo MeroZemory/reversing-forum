@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { MessageSquare } from "lucide-react";
 import type { PostScreenData } from "@/contracts/screens";
 import { formatDate } from "@/lib/format";
@@ -137,6 +138,13 @@ export function PostScreen({
               <TopicLink key={tag} tag={tag} from={returnTo} />
             ))}
           </div>
+        )}
+        {published && (
+          <p className="post-report-link">
+            <Link href={`/report?post=${encodeURIComponent(post.id)}`}>
+              글 신고·삭제 요청
+            </Link>
+          </p>
         )}
       </article>
       {published && (data.relatedPosts?.length ?? 0) > 0 && (

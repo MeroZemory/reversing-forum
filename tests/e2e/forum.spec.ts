@@ -14,6 +14,103 @@ function isolatedDatabase(info: TestInfo) {
 
 const createdPostIds: string[] = [];
 
+test("비공개 신고 접수는 회원 세션을 확인하고 운영자에게만 보인다", async ({
+  page,
+}, info) => {
+  const origin = String(info.project.use.baseURL);
+  await register(page.request, origin);
+  const { result } = await post(
+    page.request,
+    origin,
+    "권리 요청 흐름을 확인하는 격리 검수 글",
+  );
+  createdPostIds.push(result.id);
+  const privateDetail =
+    "이 요청 내용은 공개 댓글이나 글에서 보이지 않아야 합니다.";
+  const database = isolatedDatabase(info);
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/report?post=${result.id}`);
+    await expect(
+      page.getByRole("heading", { name: "글 신고·삭제 요청", exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`report-${width}.png`),
+      fullPage: true,
+    });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+    ).toBe(false);
+  }
+  await page.getByLabel("확인할 내용", { exact: true }).fill(privateDetail);
+  await page
+    .getByRole("button", { name: "운영자에게 보내기", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText("접수했습니다");
+  const row = database
+    .prepare("SELECT reporter_id,post_id,detail FROM reports WHERE post_id=?")
+    .get(result.id) as { reporter_id: string; post_id: string; detail: string };
+  const own = await (await page.request.get("/api/auth/account-status")).json();
+  const actualUser = database
+    .prepare("SELECT id FROM user WHERE email=?")
+    .get(own.email) as { id: string };
+  expect(row).toEqual({
+    reporter_id: actualUser.id,
+    post_id: result.id,
+    detail: privateDetail,
+  });
+  const protectedInbox = await page.goto("/moderation/reports");
+  expect(protectedInbox?.status()).toBe(404);
+  await page.goto(`/posts/${result.id}`);
+  await expect(page.locator("main")).not.toContainText(privateDetail);
+  await expect(
+    page.getByRole("link", { name: "글 신고·삭제 요청", exact: true }),
+  ).toHaveAttribute("href", `/report?post=${result.id}`);
+  await page.locator(".account-menu > summary").click();
+  await page.getByRole("button", { name: "로그아웃", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "로그인", exact: true }),
+  ).toBeVisible();
+  await page.goto(`/report?post=${result.id}`);
+  await expect(
+    page.getByRole("link", { name: "로그인하고 요청하기", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("확인할 내용", { exact: true })).toHaveCount(0);
+  const forbidden = await page.request.post("/api/reports", {
+    headers: { Origin: origin },
+    data: { postId: result.id, reason: "privacy", detail: privateDetail },
+  });
+  expect(forbidden.status()).toBe(401);
+  expect(
+    database
+      .prepare("SELECT COUNT(*) AS total FROM reports WHERE post_id=?")
+      .get(result.id),
+  ).toEqual({ total: 1 });
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/guide");
+    await expect(
+      page.getByRole("heading", { name: "운영 안내", exact: true }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`guide-${width}.png`),
+      fullPage: true,
+    });
+    await expect(
+      page.getByRole("link", { name: "운영자 접수 목록", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+    ).toBe(false);
+  }
+  database.prepare("DELETE FROM reports WHERE post_id=?").run(result.id);
+  database.close();
+});
+
 test("인증 링크 결과에서 재요청 폼 대신 로그인·계속하기를 표시한다", async ({
   page,
 }, info) => {
@@ -110,6 +207,7 @@ test.afterEach(async ({}, info) => {
   try {
     db.transaction(() => {
       for (const id of createdPostIds) {
+        db.prepare("DELETE FROM reports WHERE post_id=?").run(id);
         db.prepare("DELETE FROM comments WHERE post_id=?").run(id);
         db.prepare("DELETE FROM posts WHERE id=?").run(id);
       }

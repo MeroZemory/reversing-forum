@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "@/components/site-header";
+import { SiteFooter } from "@/components/site-footer";
 import { loadViewer } from "@/server/screens";
 import { AccountButton } from "@/features/account-button";
 import { siteUrl } from "@/server/site-config";
@@ -39,6 +40,7 @@ export default async function RootLayout({
         <main id="main" tabIndex={-1}>
           {children}
         </main>
+        <SiteFooter />
       </body>
     </html>
   );
