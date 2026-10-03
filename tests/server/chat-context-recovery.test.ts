@@ -576,7 +576,7 @@ it("prepare의 안정 해시와 private manifest를 유지한다", () => {
       expect(statSync(join(directory, file)).mode & 0o777).toBe(0o600);
 });
 
-it("겹친 배치의 동일 메시지를 한 번 집계하고 미완료 overlap의 pending도 복구 결과로 해소한다", () => {
+it("겹친 배치의 수입 메시지를 한 번 집계하고 미완료 overlap이 문맥 보류를 숨기지 않는다", () => {
   const f = fixture({ ...ready, maxMessages: 4, overlap: 2 });
   const first = f.batches[0];
   f.store.importResult(
@@ -593,9 +593,12 @@ it("겹친 배치의 동일 메시지를 한 번 집계하고 미완료 overlap�
       })),
     }),
   );
-  expect(f.store.summary().messageDispositions).toMatchObject({
-    pending: 5,
-    needsContext: 0,
+  expect(f.store.summary()).toMatchObject({
+    importedCoveredMessages: 4,
+    unimportedCoveredMessages: 3,
+    needsContextMessages: 1,
+    semanticReviewRequiredMessages: 1,
+    messageDispositions: { pending: 3, needsContext: 1, noncandidate: 3 },
   });
   const [input] = f.store.listContextRecoveryInputs();
   f.store.importContextRecovery(
@@ -603,8 +606,11 @@ it("겹친 배치의 동일 메시지를 한 번 집계하고 미완료 overlap�
     output(input, { noncandidateRanges: [[3, 3]] }),
   );
   expect(f.store.summary()).toMatchObject({
-    pendingMessages: 4,
-    messageDispositions: { pending: 4, needsContext: 0, noncandidate: 3 },
+    importedCoveredMessages: 4,
+    unimportedCoveredMessages: 3,
+    pendingMessages: 3,
+    semanticReviewRequiredMessages: 0,
+    messageDispositions: { pending: 3, needsContext: 0, noncandidate: 4 },
   });
   // A completed overlapping batch may still carry the old context conclusion.
   for (const batch of f.batches.slice(1))
@@ -861,6 +867,11 @@ it.each(["missing", "noncandidate", "role-change", "unresolved"])(
       uncertainties: original.uncertainties,
       needsContext: true,
     });
+    expect(f.store.summary()).toMatchObject({
+      needsContextMessages: 2,
+      semanticReviewRequiredMessages: 2,
+      messageDispositions: { candidate: 0, needsContext: 2, noncandidate: 5 },
+    });
   },
 );
 
@@ -914,6 +925,10 @@ it.each([false, true])(
     expect(
       f.store.listCandidates().find((c) => c.localId === "c")?.needsContext,
     ).toBe(true);
+    expect(f.store.summary()).toMatchObject({
+      needsContextMessages: 3,
+      semanticReviewRequiredMessages: 3,
+    });
   },
 );
 
@@ -1003,11 +1018,39 @@ it.each([false, true])(
           second.input.messages[2].id,
         ].sort(),
       });
+    if (addEvidence)
+      expect(f.store.summary()).toMatchObject({
+        importedCoveredMessages: 6,
+        needsContextMessages: 3,
+        semanticReviewRequiredMessages: 3,
+        messageDispositions: { candidate: 0, needsContext: 3, noncandidate: 3 },
+      });
     const late = (
       addEvidence ? f.store.listContextRecoveryInputs() : packets
     ).find((p) => p.blocks[0].batchId === second.batchId)!;
     f.store.importContextRecovery(late, output(late));
     expect(f.store.listCandidates()[0].needsContext).toBe(true);
+    expect(f.store.summary()).toMatchObject({
+      needsContextMessages: addEvidence ? 3 : 2,
+      semanticReviewRequiredMessages: addEvidence ? 3 : 2,
+    });
+    if (addEvidence) {
+      const db = new Database(join(f.store.directory, "jobs.sqlite"));
+      try {
+        db.prepare(
+          "UPDATE jobs SET output_hash='synthetic-mismatch' WHERE id=?",
+        ).run(second.batchId);
+        expect(f.store.summary()).toMatchObject({
+          importedCoveredMessages: 4,
+          pendingMessages: 3,
+          needsContextMessages: 0,
+          semanticReviewRequiredMessages: 0,
+          messageDispositions: { candidate: 2, noncandidate: 2, pending: 3 },
+        });
+      } finally {
+        db.close();
+      }
+    }
     // Starting a new run must hide every old contribution and recovery.
     f.store.prepare([f.source], {
       ...ready,
@@ -1016,5 +1059,11 @@ it.each([false, true])(
       promptVersion: "new-run",
     });
     expect(f.store.listCandidates()).toEqual([]);
+    expect(f.store.summary()).toMatchObject({
+      importedCoveredMessages: 0,
+      needsContextMessages: 0,
+      semanticReviewRequiredMessages: 0,
+      pendingMessages: 7,
+    });
   },
 );

@@ -209,16 +209,21 @@ export class ChatJobStore {
     }));
   }
   listCandidates() {
+    return this.collectCandidates();
+  }
+  private collectCandidates(importedBatches?: ReadonlySet<string>) {
     const grouped = new Map<string, BatchCandidate>();
     const sourceBatches = new Map<string, Set<string>>();
-    const recoveries = this.recoveryRows().map((row) => ({
-      ...row,
-      block: (JSON.parse(row.input) as ContextRecoveryInput).blocks[0],
-      result: JSON.parse(row.record) as {
-        output: BatchOutput;
-        targetIds: string[];
-      },
-    }));
+    const recoveries = this.recoveryRows()
+      .filter((row) => !importedBatches || importedBatches.has(row.batch_id))
+      .map((row) => ({
+        ...row,
+        block: (JSON.parse(row.input) as ContextRecoveryInput).blocks[0],
+        result: JSON.parse(row.record) as {
+          output: BatchOutput;
+          targetIds: string[];
+        },
+      }));
     const recoveryById = new Map(recoveries.map((r) => [r.id, r]));
     const latestTargetReview = new Map<string, string>();
     for (const recovery of recoveries)
@@ -247,6 +252,7 @@ export class ChatJobStore {
       source: string;
       recovery_id: string | null;
     }>) {
+      if (importedBatches && !importedBatches.has(row.batch_id)) continue;
       const sources = sourceBatches.get(row.candidate_key) ?? new Set<string>();
       sources.add(row.batch_id);
       sourceBatches.set(row.candidate_key, sources);
@@ -980,7 +986,21 @@ export class ChatJobStore {
       this.listCandidates().flatMap((c) => c.questionIds),
     ).size;
     const completed = count(
-      "SELECT COUNT(*) AS n" + base + " AND j.output_hash IS NOT NULL",
+      "SELECT COUNT(*) AS n" +
+        base +
+        " AND EXISTS (SELECT 1 FROM outputs o WHERE o.batch_id=j.id AND o.hash=j.output_hash)",
+    );
+    const batches = count("SELECT COUNT(*) AS n" + base);
+    const failed = count(
+      "SELECT COUNT(*) AS n" +
+        base +
+        " AND NOT EXISTS (SELECT 1 FROM outputs o WHERE o.batch_id=j.id AND o.hash=j.output_hash) AND EXISTS (SELECT 1 FROM output_attempts a WHERE a.batch_id=j.id)",
+    );
+    const preparedCovered = count(
+      "SELECT COUNT(DISTINCT c.message_id) AS n FROM coverage c JOIN jobs j ON j.id=c.batch_id JOIN runs r ON r.id=j.run_id WHERE r.active=1",
+    );
+    const importedCovered = count(
+      "SELECT COUNT(DISTINCT c.message_id) AS n FROM coverage c JOIN jobs j ON j.id=c.batch_id JOIN runs r ON r.id=j.run_id JOIN outputs o ON o.batch_id=j.id AND o.hash=j.output_hash WHERE r.active=1",
     );
     const dispositions = this.messageDispositionCounts();
     return {
@@ -988,22 +1008,34 @@ export class ChatJobStore {
         "SELECT COUNT(*) AS n FROM sources s JOIN runs r ON r.id=s.run_id WHERE r.active=1",
       ),
       canonicalMessages: total,
-      coveredMessages: count(
-        "SELECT COUNT(DISTINCT c.message_id) AS n FROM coverage c JOIN jobs j ON j.id=c.batch_id JOIN runs r ON r.id=j.run_id WHERE r.active=1",
-      ),
+      // Compatibility: coverage describes prepared inputs, not imported results.
+      coveredMessages: preparedCovered,
+      preparedCoveredMessages: preparedCovered,
+      // Distinct input coverage of matching imports, including held/quarantine.
+      importedCoveredMessages: importedCovered,
+      unimportedCoveredMessages: preparedCovered - importedCovered,
       inputDispositions: count(
         "SELECT COUNT(*) AS n FROM dispositions d JOIN runs r ON r.id=d.run_id WHERE r.active=1",
       ),
       unparsedRanges: count(
         "SELECT COUNT(*) AS n FROM dispositions d JOIN runs r ON r.id=d.run_id WHERE r.active=1 AND d.kind='unparsed'",
       ),
-      batches: count("SELECT COUNT(*) AS n" + base),
+      batches,
+      // Completed means a durably imported, hash-matching envelope only.
+      // Quarantine complete:true is included; it is NOT semantic approval.
       completedBatches: completed,
-      remainingBatches: count(
-        "SELECT COUNT(*) AS n" + base + " AND j.output_hash IS NULL",
-      ),
+      importedBatches: completed,
+      remainingBatches: batches - completed,
+      // Failed means an unimported job with a rejected import attempt.
+      failedBatches: failed,
+      unprocessedBatches: batches - completed - failed,
       heldMessages: held,
       pendingMessages: dispositions.pending,
+      needsContextMessages: dispositions.needsContext,
+      // Imported, nonheld messages missing classifications or context need review.
+      // These counts never certify independent editorial/semantic approval.
+      semanticReviewRequiredMessages:
+        dispositions.needsContext + dispositions.reviewedUnclassified,
       candidateQuestionMessages: withCandidate,
       candidates: this.listCandidates().length,
       messageDispositions: dispositions,
@@ -1017,16 +1049,25 @@ export class ChatJobStore {
       unresolvedEvidence = new Set<string>();
     const held = new Set<string>(),
       pending = new Set<string>(),
+      imported = new Set<string>(),
       all = new Set<string>();
     const rows = this.db
       .prepare(
-        `SELECT j.record,o.record AS output FROM jobs j JOIN runs r ON r.id=j.run_id LEFT JOIN outputs o ON o.batch_id=j.id WHERE r.active=1`,
+        `SELECT j.id AS batch_id,j.record,o.record AS output FROM jobs j JOIN runs r ON r.id=j.run_id LEFT JOIN outputs o ON o.batch_id=j.id AND o.hash=j.output_hash WHERE r.active=1`,
       )
-      .all() as Array<{ record: string; output: string | null }>;
+      .all() as Array<{
+      batch_id: string;
+      record: string;
+      output: string | null;
+    }>;
+    const importedBatches = new Set(
+      rows.filter((row) => row.output).map((row) => row.batch_id),
+    );
     for (const row of rows) {
       const batch = JSON.parse(row.record) as PreparedBatch;
       for (const message of batch.input.messages) {
         all.add(message.id);
+        if (row.output) imported.add(message.id);
         if (message.held) held.add(message.id);
         else if (!row.output) pending.add(message.id);
       }
@@ -1040,13 +1081,16 @@ export class ChatJobStore {
       for (const d of output.dispositions ?? [])
         (d.kind === "noncandidate" ? noncandidate : context).add(d.messageId);
     }
-    for (const row of this.recoveryRows()) {
+    for (const row of this.recoveryRows().filter((row) =>
+      importedBatches.has(row.batch_id),
+    )) {
       const result = JSON.parse(row.record) as {
         output: BatchOutput;
         targetIds: string[];
       };
       for (const id of result.targetIds) {
         pending.delete(id);
+        evidence.delete(id);
         context.delete(id);
         noncandidate.delete(id);
         unresolvedEvidence.delete(id);
@@ -1062,6 +1106,13 @@ export class ChatJobStore {
           if (c.needsContext) unresolvedEvidence.add(id);
         }
     }
+    // A partial or role-changing recovery can classify every target while the
+    // combined candidate still needs context. Preserve that final hold, using
+    // only contributions from active, hash-matching imports.
+    for (const candidate of this.collectCandidates(importedBatches))
+      if (candidate.needsContext)
+        for (const id of [...candidate.questionIds, ...candidate.responseIds])
+          if (imported.has(id)) unresolvedEvidence.add(id);
     const counts = {
       held: 0,
       candidate: 0,
@@ -1070,6 +1121,8 @@ export class ChatJobStore {
       noncandidate: 0,
       reviewedUnclassified: 0,
     };
+    // Overlapping prepared batches do not make an already imported message pending.
+    for (const id of imported) pending.delete(id);
     for (const id of all) {
       const kind = held.has(id)
         ? "held"
@@ -1077,10 +1130,10 @@ export class ChatJobStore {
           ? "needsContext"
           : evidence.has(id)
             ? "candidate"
-            : pending.has(id)
-              ? "pending"
-              : context.has(id)
-                ? "needsContext"
+            : context.has(id)
+              ? "needsContext"
+              : pending.has(id)
+                ? "pending"
                 : noncandidate.has(id)
                   ? "noncandidate"
                   : "reviewedUnclassified";

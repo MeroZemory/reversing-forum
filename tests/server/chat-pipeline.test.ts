@@ -101,6 +101,265 @@ const input = (bodies: string[], id = "synthetic-a") => ({
   ),
 });
 const options: PrepareOptions = { maxMessages: 3, overlap: 1 };
+// Bootstrap the production schema in a disposable synthetic directory, then
+// perform all preparation/import/recovery mutations against an in-memory DB.
+function openMemory() {
+  const store = open();
+  const internal = store as unknown as {
+    db: Database.Database;
+    writePrivate: (relative: string, value: unknown) => string;
+  };
+  const memory = new Database(internal.db.serialize());
+  internal.db.close();
+  internal.db = memory;
+  vi.spyOn(internal, "writePrivate").mockImplementation((relative) =>
+    join(store.directory, relative),
+  );
+  return { store, db: memory };
+}
+
+describe("활성 run의 준비·수입·의미 미해결 집계", () => {
+  it("겹친 준비 범위와 실제 수입을 구분하고 실패 후 성공·replay를 중복 집계하지 않는다", () => {
+    const { store, db } = openMemory();
+    store.prepare([input(["질문", "답변", "관찰", "추가", "끝"])], options);
+    const [first, second] = store.listBatches();
+    expect(store.summary()).toMatchObject({
+      coveredMessages: 5,
+      preparedCoveredMessages: 5,
+      importedCoveredMessages: 0,
+      unimportedCoveredMessages: 5,
+      completedBatches: 0,
+      remainingBatches: 2,
+      failedBatches: 0,
+      unprocessedBatches: 2,
+      pendingMessages: 5,
+    });
+    expect(() => store.importResult(first.batchId, "{}")).toThrow();
+    expect(store.summary()).toMatchObject({
+      failedBatches: 1,
+      unprocessedBatches: 1,
+    });
+    const raw = JSON.stringify({
+      batchId: first.batchId,
+      inputHash: first.inputHash,
+      complete: true,
+      candidates: [],
+      dispositions: first.input.messages.map((m) => ({
+        messageId: m.id,
+        kind: "noncandidate",
+        reason: "합성 모델 직접 검토",
+      })),
+    });
+    store.importResult(first.batchId, raw);
+    store.importResult(first.batchId, raw);
+    expect(store.summary()).toMatchObject({
+      importedCoveredMessages: 3,
+      unimportedCoveredMessages: 2,
+      importedBatches: 1,
+      completedBatches: 1,
+      remainingBatches: 1,
+      failedBatches: 0,
+      unprocessedBatches: 1,
+      pendingMessages: 2,
+      messageDispositions: { noncandidate: 3 },
+    });
+    // A hash or output row alone is not a durable matching import.
+    db.prepare(
+      "UPDATE jobs SET output_hash='synthetic-mismatch' WHERE id=?",
+    ).run(first.batchId);
+    expect(store.summary()).toMatchObject({
+      importedCoveredMessages: 0,
+      completedBatches: 0,
+      pendingMessages: 5,
+    });
+    db.prepare(
+      "UPDATE jobs SET output_hash=(SELECT hash FROM outputs WHERE batch_id=?) WHERE id=?",
+    ).run(first.batchId, first.batchId);
+    db.prepare("DELETE FROM outputs WHERE batch_id=?").run(first.batchId);
+    expect(store.summary()).toMatchObject({
+      importedCoveredMessages: 0,
+      completedBatches: 0,
+      pendingMessages: 5,
+    });
+    expect(second.batchId).not.toBe(first.batchId);
+  });
+
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+    [true, true],
+  ])(
+    "overlap 후보는 단순 context 분류보다 우선하되 실제 보류는 유지한다: 역순=%s, needsContext=%s",
+    (reverse, needsContext) => {
+      const { store } = openMemory();
+      store.prepare([input(["첫 문맥", "주변 문맥", "질문", "답변", "끝"])], {
+        ...options,
+        targetPrepared: true,
+        scopeApproved: true,
+        externalApproved: true,
+        sampleReviewed: true,
+        scopeVersion: "synthetic-scope",
+        reviewScopeVersion: "synthetic-scope",
+        reviewRuleVersion: SANITIZER_VERSION,
+        externalVersion: "synthetic-external",
+      });
+      const [first, second] = store.listBatches();
+      const questionId = first.input.messages[2].id,
+        responseId = second.input.messages[1].id;
+      expect(second.input.messages[0].id).toBe(questionId);
+      for (const batch of reverse ? [second, first] : [first, second])
+        store.importResult(
+          batch.batchId,
+          JSON.stringify({
+            batchId: batch.batchId,
+            inputHash: batch.inputHash,
+            complete: true,
+            candidates:
+              batch === second
+                ? [
+                    {
+                      localId: "overlap",
+                      title: "합성 질문과 답변",
+                      topic: "분석",
+                      questionIds: [questionId],
+                      responseIds: [responseId],
+                      uncertainties: [],
+                      needsContext,
+                    },
+                  ]
+                : [],
+            dispositions: batch.input.messages
+              .filter(
+                (m) =>
+                  batch === first ||
+                  (m.id !== questionId && m.id !== responseId),
+              )
+              .map((m) => ({
+                messageId: m.id,
+                kind: m.id === questionId ? "needs-context" : "noncandidate",
+                reason: "합성 분류",
+              })),
+          }),
+        );
+      expect(store.listCandidates()).toHaveLength(1);
+      expect(store.listCandidates()[0].needsContext).toBe(needsContext);
+      expect(store.summary()).toMatchObject({
+        importedBatches: 2,
+        importedCoveredMessages: 5,
+        pendingMessages: 0,
+        needsContextMessages: needsContext ? 2 : 0,
+        semanticReviewRequiredMessages: needsContext ? 2 : 0,
+        messageDispositions: {
+          candidate: needsContext ? 0 : 2,
+          needsContext: needsContext ? 2 : 0,
+          noncandidate: 3,
+          pending: 0,
+        },
+      });
+      if (!needsContext) expect(store.listContextRecoveryInputs()).toEqual([]);
+    },
+  );
+
+  it("구형 complete 출력의 분류 누락과 개인정보 보류를 수입 완료와 분리한다", () => {
+    const { store } = openMemory();
+    store.prepare([input(["질문", "답변", "집주소는 특정주소"])], options);
+    const batch = store.listBatches()[0];
+    store.importResult(
+      batch.batchId,
+      JSON.stringify({
+        batchId: batch.batchId,
+        inputHash: batch.inputHash,
+        complete: true,
+        candidates: [],
+      }),
+    );
+    expect(store.summary()).toMatchObject({
+      completedBatches: 1,
+      importedCoveredMessages: 3,
+      pendingMessages: 0,
+      heldMessages: 1,
+      semanticReviewRequiredMessages: 2,
+      messageDispositions: { held: 1, reviewedUnclassified: 2 },
+    });
+  });
+
+  it("문맥 복구는 수입 분모를 늘리지 않으며 활성 run을 바꾸면 과거 결과를 제외한다", () => {
+    const { store } = openMemory();
+    const source = input(["질문", "문맥", "답변"]);
+    const approved: PrepareOptions = {
+      ...options,
+      targetPrepared: true,
+      scopeApproved: true,
+      externalApproved: true,
+      sampleReviewed: true,
+      scopeVersion: "synthetic-scope",
+      reviewScopeVersion: "synthetic-scope",
+      reviewRuleVersion: SANITIZER_VERSION,
+      externalVersion: "synthetic-external",
+    };
+    store.prepare([source], approved);
+    const batch = store.listBatches()[0];
+    const raw = JSON.stringify({
+      batchId: batch.batchId,
+      inputHash: batch.inputHash,
+      complete: true,
+      candidates: [],
+      dispositions: batch.input.messages.map((m) => ({
+        messageId: m.id,
+        kind: "needs-context",
+        reason: "합성 문맥 보류",
+      })),
+    });
+    store.importResult(batch.batchId, raw);
+    expect(store.summary()).toMatchObject({
+      importedCoveredMessages: 3,
+      needsContextMessages: 3,
+      semanticReviewRequiredMessages: 3,
+    });
+    const [recovery] = store.listContextRecoveryInputs();
+    const recovered = JSON.stringify({
+      packetId: recovery.packetId,
+      complete: true,
+      blocks: [
+        {
+          batchId: batch.batchId,
+          candidates: [],
+          noncandidateRanges: [[0, 2]],
+          contextIds: [],
+        },
+      ],
+    });
+    store.importContextRecovery(recovery, recovered);
+    store.importContextRecovery(recovery, recovered);
+    expect(store.summary()).toMatchObject({
+      importedCoveredMessages: 3,
+      completedBatches: 1,
+      needsContextMessages: 0,
+      semanticReviewRequiredMessages: 0,
+      messageDispositions: { noncandidate: 3 },
+    });
+    store.prepare([source], {
+      ...approved,
+      scopeVersion: "synthetic-next",
+      reviewScopeVersion: "synthetic-next",
+    });
+    expect(store.summary()).toMatchObject({
+      preparedCoveredMessages: 3,
+      importedCoveredMessages: 0,
+      completedBatches: 0,
+      remainingBatches: 1,
+      pendingMessages: 3,
+    });
+    store.prepare([source], approved);
+    expect(store.summary()).toMatchObject({
+      importedCoveredMessages: 3,
+      completedBatches: 1,
+      needsContextMessages: 0,
+      semanticReviewRequiredMessages: 0,
+    });
+  });
+});
 it("SQLite 잠금은 모델 오류로 격리하지 않고 안전하게 진단하며 잠금 해제 후 같은 결과를 보존한다", () => {
   const store = open();
   store.prepare(
@@ -782,6 +1041,21 @@ describe("native 전체·축소 결과의 안전한 병합", () => {
     expect(
       validateBatchOutput(JSON.stringify(result.prepared[0]), batch),
     ).toEqual(result.prepared[0]);
+    const { store } = openMemory();
+    store.prepare(
+      [input(Array.from({ length: 60 }, (_, i) => `분석 메모 ${i}`))],
+      { maxMessages: 100, overlap: 1 },
+    );
+    store.importResult(batch.batchId, JSON.stringify(result.prepared[0]));
+    expect(store.summary()).toMatchObject({
+      preparedCoveredMessages: 60,
+      importedCoveredMessages: 60,
+      unimportedCoveredMessages: 0,
+      completedBatches: 1,
+      needsContextMessages: 60,
+      semanticReviewRequiredMessages: 60,
+      messageDispositions: { candidate: 0, noncandidate: 0, needsContext: 60 },
+    });
   });
 
   it("context-only는 거부된 모델을 채택하지 않고 제외 범위까지 모든 nonheld를 비공개로 보관한다", () => {
