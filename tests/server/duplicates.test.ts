@@ -21,6 +21,10 @@ import {
   validateJudgment,
 } from "@/server/duplicates/judge";
 import { JevBudget } from "@/server/jev-budget";
+import {
+  candidateRetriever,
+  retrieveCandidateUnion,
+} from "@/server/duplicates/retrieval";
 
 const external = vi.hoisted(() => ({
   pipeline: vi.fn(),
@@ -361,6 +365,7 @@ describe("bounded duplicate assessment", () => {
   );
 
   it("retrieves the union from every block rather than the longest/highest/average block", () => {
+    expect(module.retrieveCandidateUnion).toBe(retrieveCandidateUnion);
     const documents = Array.from({ length: 6 }, (_, i) => ({
       document: { id: `post-${i}`, ...input(`topic${i}`) },
       blocks: [{ start: 0, end: 6, text: `topic${i}`, context: "", weight: 6 }],
@@ -374,6 +379,58 @@ describe("bounded duplicate assessment", () => {
     );
     expect(ids).toContain("post-0");
     expect(ids).toContain("post-5");
+  });
+
+  it("preserves copy ranks, the 60-character copy cutoff, lexical top five, neighbour top three and tie order", () => {
+    const shared = "A".repeat(60);
+    const value = { title: "", body: shared + " != 0x10", tags: [] };
+    const block = { start: 0, end: 60, text: shared, context: "", weight: 60 };
+    const documents = [
+      ...Array.from({ length: 8 }, (_, i) => ({
+        document: { id: `old-${i}`, title: "", body: "!=", tags: [] },
+        blocks: [],
+        vectors: [vector(0)],
+      })),
+      {
+        document: { id: "z-exact", ...value },
+        blocks: [],
+        vectors: [vector(1)],
+      },
+      {
+        document: {
+          id: "y-copy",
+          title: "",
+          body: shared + " changed",
+          tags: [],
+        },
+        blocks: [block],
+        vectors: [vector(1)],
+      },
+    ];
+    const expected = ["z-exact", "y-copy", "old-0", "old-1", "old-2", "old-3"];
+    expect(
+      retrieveCandidateUnion(value, [block], [vector(0)], documents),
+    ).toEqual(expected);
+    const streaming = candidateRetriever(value, [block], [vector(0)]);
+    for (const d of documents.slice().reverse()) streaming.visit(d);
+    expect(streaming.result()).toEqual(expected);
+    expect(
+      retrieveCandidateUnion(
+        value,
+        [{ ...block, weight: 59 }],
+        [vector(0)],
+        documents,
+      ),
+    ).toEqual(expected.filter((id) => id !== "y-copy"));
+    // With no lexical overlap, only the three per-block neighbours survive.
+    expect(
+      retrieveCandidateUnion(
+        { title: "", body: "unmatched", tags: [] },
+        [],
+        [vector(0)],
+        documents.slice(0, 8),
+      ),
+    ).toEqual(["old-0", "old-1", "old-2"]);
   });
 
   it("does not treat high cosine as block proof or auto-approve an uncovered short tail", async () => {
