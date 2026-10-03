@@ -44,7 +44,12 @@ function cookieOf(response: Response) {
     .join("; ");
 }
 function mailURL() {
-  return new URL(mails.at(-1)!.text.split("\n")[1]);
+  const link = mails
+    .at(-1)!
+    .text.split(/\s+/)
+    .find((part) => /^https?:\/\//.test(part));
+  if (!link) throw new Error("Authentication mail must contain a link.");
+  return new URL(link);
 }
 async function signup(email: string) {
   return post("/sign-up/email", {

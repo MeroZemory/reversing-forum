@@ -9,6 +9,10 @@ import {
 import { randomUUID } from "node:crypto";
 import { googleConfigured, mailConfigured, sendAuthMail } from "./auth-mail";
 import {
+  AUTH_VERIFICATION_TTL_SECONDS,
+  AUTH_RESET_TTL_SECONDS,
+} from "./auth-email-template";
+import {
   allowMail,
   consumeVerification,
   registerVerification,
@@ -41,7 +45,7 @@ export const auth = betterAuth({
     autoSignIn: false,
     minPasswordLength: 10,
     maxPasswordLength: 128,
-    resetPasswordTokenExpiresIn: 1800,
+    resetPasswordTokenExpiresIn: AUTH_RESET_TTL_SECONDS,
     revokeSessionsOnPasswordReset: true,
     sendResetPassword: async ({ user, url }) => {
       if (allowMail(user.email)) await sendAuthMail(user.email, url, true);
@@ -50,7 +54,7 @@ export const auth = betterAuth({
   emailVerification: {
     sendOnSignUp: true,
     sendOnSignIn: false,
-    expiresIn: 3600,
+    expiresIn: AUTH_VERIFICATION_TTL_SECONDS,
     autoSignInAfterVerification: false,
     sendVerificationEmail: async ({ user, url }) => {
       if (!allowMail(user.email)) return;
@@ -61,7 +65,7 @@ export const auth = betterAuth({
         secret!,
         user.email,
         undefined,
-        3600,
+        AUTH_VERIFICATION_TTL_SECONDS,
         { nonce: randomUUID() },
       );
       const link = new URL(url);

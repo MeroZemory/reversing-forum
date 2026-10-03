@@ -1,6 +1,44 @@
 import { readFileSync } from "node:fs";
 import "./auth-environment";
+import { renderAuthEmail } from "./auth-email-template";
 import { captureTestMail, testMailboxPath } from "./auth-test-mailbox";
+
+function mailLinkAllowed(link: string) {
+  try {
+    const target = new URL(link);
+    const configured = new URL(process.env.BETTER_AUTH_URL || "");
+    if (
+      !["http:", "https:"].includes(configured.protocol) ||
+      target.origin !== configured.origin ||
+      target.username ||
+      target.password ||
+      configured.username ||
+      configured.password
+    )
+      return false;
+    if (process.env.NODE_ENV === "production") {
+      const host = target.hostname.toLowerCase();
+      return (
+        target.protocol === "https:" &&
+        host !== "localhost" &&
+        !host.endsWith(".localhost") &&
+        host !== "[::1]" &&
+        !host.startsWith("127.")
+      );
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function brandedSender() {
+  const from = process.env.RESEND_FROM?.trim() || "";
+  if (/[\r\n]/.test(from)) return "";
+  const address = from.match(/<([^<>]+)>$/)?.[1] || from;
+  if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(address)) return "";
+  return `Reversing All <${address}>`;
+}
 
 function apiKey() {
   if (process.env.RESEND_API_KEY) return process.env.RESEND_API_KEY.trim();
@@ -16,7 +54,7 @@ function apiKey() {
 }
 export function mailConfigured() {
   if (testMailboxPath()) return true;
-  return Boolean(apiKey() && process.env.RESEND_FROM);
+  return Boolean(apiKey() && brandedSender());
 }
 export function googleConfigured() {
   return Boolean(
@@ -32,8 +70,10 @@ export async function sendAuthMail(
   // Production ignores capture; non-production capture never falls through.
   if (testMailboxPath()) return captureTestMail(email, url, reset);
   const key = apiKey();
-  if (!key || !process.env.RESEND_FROM) return false;
+  const from = brandedSender();
+  if (!key || !from || !mailLinkAllowed(url)) return false;
   try {
+    const template = renderAuthEmail(url, reset);
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -41,12 +81,9 @@ export async function sendAuthMail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM,
+        from,
         to: [email],
-        subject: reset
-          ? "Reversing All 비밀번호 재설정"
-          : "Reversing All 이메일 인증",
-        text: `${reset ? "비밀번호를 재설정" : "이메일을 인증"}하려면 다음 링크를 열어 주세요.\n${url}\n요청하지 않았다면 이 메일을 무시해 주세요.`,
+        ...template,
       }),
       signal: AbortSignal.timeout(10000),
     });

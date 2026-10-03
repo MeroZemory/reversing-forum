@@ -47,14 +47,58 @@ it("captures privately without reading auth credentials or calling Resend", asyn
     expect(fetch).not.toHaveBeenCalled();
     vi.stubEnv("RESEND_API_KEY", "synthetic-production-key");
     vi.stubEnv("RESEND_FROM", "synthetic@example.test");
+    vi.stubEnv("BETTER_AUTH_URL", "https://forum.example.test");
     expect(mailConfigured()).toBe(true);
     expect(
-      await sendAuthMail("synthetic@example.test", "http://localhost/verify"),
+      await sendAuthMail(
+        "synthetic@example.test",
+        "https://forum.example.test/verify",
+      ),
     ).toBe(true);
     expect(fetch).toHaveBeenCalledTimes(1);
   } finally {
     rmSync(directory, { recursive: true });
   }
+});
+it("sends branded HTML and text while refusing links outside the configured production origin", async () => {
+  vi.stubEnv("NODE_ENV", "production");
+  vi.stubEnv("FORUM_AUTH_TEST_MAILBOX", "");
+  vi.stubEnv("RESEND_API_KEY", "synthetic-production-key");
+  vi.stubEnv("RESEND_FROM", "Legacy name <synthetic@example.test>");
+  vi.stubEnv("BETTER_AUTH_URL", "https://forum.example.test");
+  const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+    Response.json({ id: "synthetic" }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const { sendAuthMail } = await import("@/server/auth-mail");
+  const url =
+    "https://forum.example.test/api/auth/verify-email?token=synthetic&callbackURL=%2Faccount";
+  expect(await sendAuthMail("synthetic@example.test", url)).toBe(true);
+  const payload = JSON.parse(fetch.mock.calls[0][1]!.body as string);
+  expect(payload.from).toBe("Reversing All <synthetic@example.test>");
+  expect(payload.html).toContain("이메일 인증");
+  expect(payload.text).toContain(url);
+  for (const invalid of [
+    "http://127.0.0.1:3000/api/auth/verify-email?token=synthetic",
+    "https://different.example.test/verify",
+    "https://forum.example.test.attacker.test/verify",
+    "https://user:password@forum.example.test/verify",
+    "javascript:alert(1)",
+  ])
+    expect(await sendAuthMail("synthetic@example.test", invalid)).toBe(false);
+  expect(fetch).toHaveBeenCalledTimes(1);
+  for (const local of [
+    "http://localhost:3000",
+    "https://localhost",
+    "https://127.0.0.1",
+    "https://[::1]",
+  ]) {
+    vi.stubEnv("BETTER_AUTH_URL", local);
+    expect(
+      await sendAuthMail("synthetic@example.test", `${local}/verify`),
+    ).toBe(false);
+  }
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 it("accepts the parent's scoped E2E filename and UI review directory", () => {
   vi.stubEnv("NODE_ENV", "test");
