@@ -108,23 +108,26 @@ export function PostScreen({
             aria-label="자료 출처와 확인 상태"
           >
             <p>
-              <strong>자료 출처</strong> ·{" "}
-              {post.editorial.sourceType === "chat-editorial"
-                ? "과거 카톡의 기술 논의를 정리한 편집 자료입니다."
-                : "편집 계정이 별도로 작성한 안내 자료입니다."}
-            </p>
-            <p>
+              <strong>
+                {post.editorial.sourceType === "chat-editorial"
+                  ? "과거 카톡 편집 자료"
+                  : "별도로 작성한 안내 자료"}
+              </strong>{" "}
+              ·{" "}
               {post.editorial.sourceType === "chat-editorial"
                 ? "과거 기록 기간"
                 : "자료 기준 기간"}{" "}
               · {post.editorial.period || "기간 미확인"}
             </p>
-            <p>
-              <strong>현재 확인 상태</strong> ·{" "}
-              {post.editorial.verificationSummary.trim() ||
-                "확인 상태가 기록되지 않았습니다."}
-            </p>
-            <p>기록 기간과 웹 게시일은 별도로 표시합니다.</p>
+            <p>기록 시점과 웹 게시일은 다릅니다.</p>
+            <p>현재 내용·효력은 별도 확인이 필요합니다.</p>
+            <details>
+              <summary>확인 내역</summary>
+              <p>
+                {post.editorial.verificationSummary.trim() ||
+                  "확인 상태가 기록되지 않았습니다."}
+              </p>
+            </details>
           </aside>
         )}
         <MarkdownBody body={post.body} />

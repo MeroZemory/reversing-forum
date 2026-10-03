@@ -225,6 +225,8 @@ describe("editorial display", () => {
     expect(ordinary).toContain('"@type":"Person"');
     expect(ordinary).not.toContain("운영계정");
     expect(ordinary).not.toContain("자료 출처");
+    expect(ordinary).not.toContain("editorial-provenance");
+    expect(ordinary).not.toContain("<details");
   });
 
   it("uses explicit language labels and English for unsupported locales", () => {
@@ -270,9 +272,17 @@ describe("editorial display", () => {
     expect(markup).toContain(`"datePublished":"${publishedAt}"`);
     expect(markup).toContain("Rédaction");
     expect(markup).toContain("Équipe");
-    expect(markup).toContain("과거 카톡의 기술 논의를 정리한 편집 자료입니다.");
-    expect(markup).toContain(provenance.period);
-    expect(markup).toContain(provenance.verificationSummary);
+    const aside = markup.match(/<aside[^>]*>([\s\S]*?)<\/aside>/)![1];
+    const [collapsed, detail] = aside.split("<details>");
+    expect(markup).toContain('aria-label="자료 출처와 확인 상태"');
+    expect(collapsed).toContain("과거 카톡 편집 자료");
+    expect(collapsed).toContain(`과거 기록 기간 · ${provenance.period}`);
+    expect(collapsed).toContain("기록 시점과 웹 게시일은 다릅니다.");
+    expect(collapsed).toContain("현재 내용·효력은 별도 확인이 필요합니다.");
+    expect(collapsed).not.toContain(provenance.verificationSummary);
+    expect(detail).toContain("<summary>확인 내역</summary>");
+    expect(detail).toContain(provenance.verificationSummary);
+    expect(markup).not.toMatch(/<details[^>]*\sopen/);
     expect(markup).toContain("댓글 흐름");
     expect(markup).not.toContain("private-");
   });

@@ -1069,7 +1069,19 @@ svg {
   overflow-wrap: anywhere;
 }
 .editorial-provenance p {
-  margin: var(--space-2) 0;
+  margin: var(--space-1) 0;
+}
+.editorial-provenance summary {
+  width: fit-content;
+  max-width: 100%;
+  min-height: var(--target-size);
+  align-content: center;
+  cursor: pointer;
+  color: var(--color-link);
+}
+.editorial-provenance summary:focus-visible {
+  outline: 2px solid var(--color-link);
+  outline-offset: 2px;
 }
 .avatar {
   display: inline-flex;
