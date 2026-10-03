@@ -77,6 +77,18 @@ legacy/         이전 구현을 원형 그대로 보존한 참고 자료
 
 대상과 기술 논점이 명확한 질문은 원자료에 답이 없어도 공개 후보로 남깁니다. 운영자가 확인한 공식 출처로 설명을 보충하려면 `prepare --supplements`에 후보별 `{ title, url, notes }` 목록이 담긴 비공개 JSON을 전달합니다. 출처는 카톡 근거와 별도로 전달하며 본문에는 `### 편집자 보충`과 해당 출처 링크를 표시합니다. 명령은 출처의 형식과 인용 여부를 검사하고, 설명의 정확성과 적용 범위는 운영자와 독립 검토자가 확인합니다. 보충으로 불명확한 프로그램이나 빠진 이미지를 추측해 메우지 않습니다.
 
+`[링크 제거]`로 최소화한 후보의 원본 참조는 다음 로컬 명령으로 확인합니다. 입력·출력 파일은 모두 `data/chat-pipeline/` 안에 두며, 기존 파일은 덮어쓰지 않습니다. `keys.json`에는 검토할 후보 키의 JSON 배열을 넣습니다.
+
+```sh
+node --import tsx scripts/chat-editorial-references.ts inspect data/chat-pipeline/keys.json data/chat-pipeline/references.private.json
+node --import tsx scripts/chat-editorial-references.ts emit data/chat-pipeline/references.private.json data/chat-pipeline/reference-decisions.private.json data/chat-pipeline/supplements.private.json
+node --import tsx scripts/chat-editorial-batches.ts prepare --candidate-keys data/chat-pipeline/keys.json --supplements data/chat-pipeline/supplements.private.json
+```
+
+`inspect`는 `jobs.sqlite`를 읽기 전용으로 열고 활성 후보의 실제 질문·응답 근거에 연결된 URL 중 안전 조건을 통과한 참조만 비공개 파일에 기록합니다. 인증정보·비밀 쿼리·이메일 등 식별정보가 감지된 URL은 값 자체를 기록하지 않고 후보별 `excludedReferences` 수와 일반 사유 `unsafe-or-private-url`만 남깁니다. 원문 텍스트와 닉네임도 기록하지 않습니다. 이 단계의 안전 검사는 운영자의 확인을 대신하지 않습니다. 결정 파일은 `{ candidateKey, messageId, url, decision: "allow", checked: true, title, notes }` 항목의 JSON 배열입니다. 운영자가 해당 URL을 실제로 확인하여 안전한 공개 기술문서로 판단하고, 개인정보·비밀값·원문 표현 없이 제목과 적용 조건을 새로 작성한 경우에만 `checked: true`를 지정합니다. 제외할 참조는 `{ candidateKey, messageId, url, decision: "exclude" }`로 표시하거나 결정 파일에서 생략합니다. 확인은 운영자가 직접 수행하며 명령은 URL을 자동 허용하거나 접속하지 않습니다.
+
+`emit`은 현재 후보·질답 근거·URL과 비공개 확인 파일이 일치하는지 다시 검사하고, 허용한 출처만 기존 `--supplements` 형식으로 출력합니다. 보류·문맥 미해결·근거 누락 후보, 선택 범위 밖 결정, 확인 누락, 위험 URL이나 감지된 비밀값·신원·원문 재사용은 출력을 차단합니다. 참조가 모두 제외되면 출력 파일을 만들지 않습니다. HTTPS 공개 DNS 주소만 허용하며 질의 문자열·fragment·퍼센트 인코딩·인증정보·내부 주소는 거부합니다. 이 검사는 사실 확인이나 익명성을 보장하지 않으므로 실제 문서의 내용과 공개 적합성은 운영자가 확인합니다. 원본 참조 목록은 모델 입력에 전달하지 않고, 검토한 출처만 `editorialSources`로 전달합니다. Windows에서는 비공개 작업 폴더의 접근 권한도 운영자가 제한합니다. 새 게시 승인 단계, DB 스키마, 별도 해시 장부나 자료 가공 비용 기록을 추가하지 않습니다.
+
 일괄 임포트 전에는 `scripts/chat-bulk-preflight.ts`의 `prepare`와 `resolve`를 사용합니다. 비공개 manifest에 승인된 bundle/review 쌍과 선택적인 기존 글 갱신 대응표를 지정합니다. `prepare`는 공개 DB를 읽기 전용으로 조회하고 본문 블록 임베딩과 전체 비교 자료를 준비합니다. `resolve`는 그 준비 파일, 모델의 묶음 판정, 현재 공개 글 목록을 직접 비교합니다. 별도 해시 보관이나 재입력은 필요하지 않습니다. 최종본·검토 결과·비교 대상이 달라지면 새 준비 파일이 필요합니다. 불확실한 판정과 갱신될 옛 본문에 의존한 판정은 보류합니다. 비공개 작업 파일은 운영자가 관리하며, 실제 게시에는 인증·Jev·사이트 중복 검수를 적용합니다.
 
 편집 자료에는 원래 대화 없이 이해할 수 있는 구체적인 질문·개념·조건·방법만 남깁니다. 불명확한 대상이나 필수 이미지의 빈자리를 추측하지 않으며, 대화 경과·약어 혼선·근거 없는 답변을 나열한 요약은 게시하지 않습니다. 현재 품질 기준과 같은 공개본에 대한 작성 단계·독립 검토의 통과가 필요하며, 이전 기준의 승인으로 새 게시를 통과할 수 없습니다. 품질 보류는 실제 편집 세션과 감사 기록으로 처리하고, 새 버전의 검토·승인·최종 검수를 통해 복구합니다.
