@@ -91,7 +91,8 @@ async function activeAccount() {
     {
       windowsHide: true,
       encoding: "utf8",
-      timeout: 30_000,
+      // A local OCX startup can exceed 30 seconds under shared machine load.
+      timeout: 60_000,
       maxBuffer: 1_000_000,
       env,
     },
