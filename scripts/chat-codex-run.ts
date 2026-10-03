@@ -10,6 +10,10 @@ import {
 import { resolve, join, dirname } from "node:path";
 import Database from "better-sqlite3";
 import {
+  createCodexAttemptOutput,
+  acceptCodexAttemptOutput,
+} from "../src/server/chat-pipeline/staged-codex-output";
+import {
   candidateRelativeContext,
   codexPrompt,
   stopCodexProcess,
@@ -261,6 +265,9 @@ try {
         "hooks",
         "fast_mode",
       ];
+      const attemptOutputPath = createCodexAttemptOutput(
+        join(directory, "codex-logs"),
+      );
       const child = spawn(
         process.execPath,
         [
@@ -295,7 +302,7 @@ try {
           "--output-schema",
           actualSchemaPath,
           "--output-last-message",
-          outputPath,
+          attemptOutputPath,
           "--color",
           "never",
           "-",
@@ -387,6 +394,7 @@ try {
       await pendingStop;
       process.off("SIGINT", onSignal);
       process.off("SIGTERM", onSignal);
+      let finalAccountConfirmed = false;
       for (let attempt = 0; attempt < 3; attempt++) {
         let account;
         try {
@@ -406,6 +414,7 @@ try {
           )
         )
           stop("account-unavailable-or-changed");
+        else finalAccountConfirmed = true;
         break;
       }
       const usage = collector.finalUsage();
@@ -417,6 +426,7 @@ try {
         );
       const settled =
         !stopped &&
+        finalAccountConfirmed &&
         ledger.settle(reservationId, model, collector.rawUsage(), result);
       const receipt = {
         reservationId,
@@ -433,6 +443,7 @@ try {
         usage,
         reservedProxyUsd,
         settled,
+        finalAccountConfirmed,
         stopped,
         stopReason,
         accountStatusFailures,
@@ -443,18 +454,25 @@ try {
         basis: PROXY_BASIS,
         completedAt: new Date().toISOString(),
       };
+      const output = acceptCodexAttemptOutput(attemptOutputPath, outputPath, {
+        exitCode: result,
+        stopped,
+        settled,
+        finalAccountConfirmed,
+      });
+      const completedReceipt = { ...receipt, ...output };
       writeFileSync(
         join(directory, "codex-logs", `${reservationId}.receipt.json`),
-        JSON.stringify(receipt, null, 2),
+        JSON.stringify(completedReceipt, null, 2),
       );
       console.log(
         JSON.stringify({
-          ...receipt,
+          ...completedReceipt,
           outputExists: existsSync(outputPath),
           budget: ledger.summary(),
         }),
       );
-      if (result !== 0 || stopped || !settled) process.exitCode = 1;
+      if (!output.outputAccepted) process.exitCode = 1;
     }
   }
 } finally {
