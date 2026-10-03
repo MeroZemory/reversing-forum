@@ -45,6 +45,97 @@ function fixture() {
 }
 
 describe("편집 근거의 순서와 구간", () => {
+  it("백업 간 중복 대응이 불확실해도 각 원본의 질문과 답변 순서는 보존한다", () => {
+    const { db, minimized, add } = fixture();
+    try {
+      add("a-q", 1, "2025-02-01T10:00", "source-a", "동일표시명");
+      add("b-q", 2, "2025-02-01T10:00", "source-b", "동일표시명");
+      add("a-r", 3, "2025-02-01T10:01", "source-a", "동일표시명");
+      add("b-r", 4, "2025-02-01T10:01", "source-b", "동일표시명");
+      for (const evidence of minimized.values())
+        evidence.duplicateAmbiguous = true;
+      const value = editorialEvidence(
+        db,
+        ["b-r", "a-r", "b-q", "a-q"],
+        minimized,
+      );
+      expect(value.evidence.map((m) => [m.id, m.segment])).toEqual([
+        ["a-q", 0],
+        ["a-r", 0],
+        ["b-q", 1],
+        ["b-r", 1],
+      ]);
+      expect(value.evidence.every((m) => m.duplicateAmbiguous)).toBe(true);
+      expect(value.evidence[0].speaker).toBe(value.evidence[1].speaker);
+      expect(value.evidence[2].speaker).toBe(value.evidence[3].speaker);
+      expect(value.evidence[0].speaker).not.toBe(value.evidence[2].speaker);
+      expect(JSON.stringify(value)).not.toMatch(
+        /source-a|source-b|동일표시명|messageOrder/,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("각 원본의 순서대로 묶어도 날짜·시간 역행·긴 간격 경계를 합치지 않는다", () => {
+    const { db, minimized, add } = fixture();
+    try {
+      add("q", 1, "2025-02-01T10:01");
+      add("backward", 2, "2025-02-01T10:00");
+      add("later", 3, "2025-02-01T11:00");
+      add("next-day", 4, "2025-02-02T11:01");
+      for (const evidence of minimized.values())
+        evidence.duplicateAmbiguous = true;
+      const value = editorialEvidence(db, [...minimized.keys()], minimized);
+      expect(value.evidence.map((m) => m.segment)).toEqual([0, 1, 2, 3]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("순서 정보가 없는 근거를 앞으로 옮겨 질문과 답변 사이의 경계를 지우지 않는다", () => {
+    const { db, minimized, add } = fixture();
+    try {
+      add("q", 1, "2025-02-01T10:00");
+      add("unknown", 2, "2025-02-01T10:01");
+      add("r", 3, "2025-02-01T10:02");
+      const change = db.prepare(
+        "UPDATE ledger SET record=json_set(record,'$.message.order',?) WHERE id=?",
+      );
+      change.run(10, "q");
+      change.run(null, "unknown");
+      change.run(11, "r");
+      const value = editorialEvidence(db, [...minimized.keys()], minimized);
+      expect(value.evidence.map((m) => [m.id, m.segment])).toEqual([
+        ["q", 0],
+        ["unknown", 1],
+        ["r", 2],
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("해시나 같은 분의 시각보다 백업 파일에 기록된 원래 순서를 우선한다", () => {
+    const { db, minimized, add } = fixture();
+    try {
+      add("r", 1, "2025-02-01T10:00");
+      add("q", 2, "2025-02-01T10:00");
+      const change = db.prepare(
+        "UPDATE ledger SET record=json_set(record,'$.message.order',?) WHERE id=?",
+      );
+      change.run(11, "r");
+      change.run(10, "q");
+      const value = editorialEvidence(db, ["r", "q"], minimized);
+      expect(value.evidence.map((m) => [m.id, m.segment])).toEqual([
+        ["q", 0],
+        ["r", 0],
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("질문 우선·해시 순서 대신 실제 원본 순서와 숫자 구간만 전달한다", () => {
     const { db, minimized, add } = fixture();
     try {

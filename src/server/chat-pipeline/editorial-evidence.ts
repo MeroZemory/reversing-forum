@@ -39,6 +39,36 @@ export function editorialEvidence(
       return { evidence, chronology };
     })
     .sort((a, b) => a.chronology.position - b.chronology.position);
+  // Ledger order interleaves occurrences from overlapping backups. Preserve
+  // each export's own order without asserting that occurrences across exports
+  // represent the same message or author.
+  const sourceLanes = new Map<string, number>();
+  const incompleteOrderLanes = new Set<string>();
+  const sourceKey = (value: (typeof selected)[number]) =>
+    typeof value.chronology.sourceId === "string" && value.chronology.sourceId
+      ? JSON.stringify(["source", value.chronology.sourceId])
+      : JSON.stringify(["unknown", value.evidence.id]);
+  for (const value of selected) {
+    const key = sourceKey(value);
+    if (!sourceLanes.has(key)) sourceLanes.set(key, sourceLanes.size);
+    if (
+      typeof value.chronology.messageOrder !== "number" ||
+      !Number.isSafeInteger(value.chronology.messageOrder) ||
+      value.chronology.messageOrder < 0
+    )
+      incompleteOrderLanes.add(key);
+  }
+  const sourceOrder = (value: (typeof selected)[number]) =>
+    !incompleteOrderLanes.has(sourceKey(value)) &&
+    typeof value.chronology.messageOrder === "number"
+      ? value.chronology.messageOrder
+      : value.chronology.position;
+  selected.sort(
+    (a, b) =>
+      sourceLanes.get(sourceKey(a))! - sourceLanes.get(sourceKey(b))! ||
+      sourceOrder(a) - sourceOrder(b) ||
+      a.chronology.position - b.chronology.position,
+  );
   const starts = new Set(
     relativeSegmentStarts(
       selected.map(({ evidence, chronology }, index) => ({
@@ -46,7 +76,8 @@ export function editorialEvidence(
         local: chronology.local,
         sourceId: chronology.sourceId,
         order: chronology.messageOrder,
-        duplicateAmbiguous: evidence.duplicateAmbiguous,
+        // Cross-backup matching uncertainty does not erase known order in
+        // one export. The uncertainty flag still reaches the reviewer below.
       })),
     ),
   );
@@ -57,8 +88,10 @@ export function editorialEvidence(
     const { id, text, attachmentMissing, duplicateAmbiguous, held } = value;
     // Aliases in prepared batches are reused. Scope fresh labels to this candidate;
     // nickname changes never establish that two identities are the same person.
-    const privateAuthor =
-      typeof chronology.author === "string" ? chronology.author : id;
+    const privateAuthor = JSON.stringify([
+      typeof chronology.sourceId === "string" ? chronology.sourceId : id,
+      typeof chronology.author === "string" ? chronology.author : id,
+    ]);
     if (!speakers.has(privateAuthor))
       speakers.set(privateAuthor, `발언자${speakers.size + 1}`);
     const speaker = speakers.get(privateAuthor)!;
