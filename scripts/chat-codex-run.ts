@@ -94,7 +94,8 @@ async function activeAccount() {
       // A local OCX startup can exceed 30 seconds under shared machine load.
       timeout: 60_000,
       maxBuffer: 1_000_000,
-      env,
+      // Allow a busy local proxy to prove liveness before querying its account.
+      env: { ...env, OCX_PROBE_TIMEOUT_MS: "5000" },
     },
   );
   const active = JSON.parse(stdout).accounts.filter(
