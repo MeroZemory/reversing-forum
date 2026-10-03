@@ -388,6 +388,7 @@
         font-size: 15px;
       }
       .graph-scroll .artifact-dag {
+        width: 1600px !important;
         min-width: 1600px;
       }
       header .approval {
@@ -398,6 +399,12 @@
       .artifact-dag text {
         pointer-events: none;
       }
+      .graph-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 12px;
+      }
       .graph-mode {
         padding: 8px 16px;
         min-height: 44px;
@@ -405,16 +412,23 @@
         border: 1px solid #a7b8c7;
         border-radius: 6px;
         color: #254a67;
-        margin: 0 0 12px;
+        margin: 0;
         font: inherit;
         cursor: pointer;
       }
+      .graph-mode[aria-pressed="true"] {
+        background: #edf4fb;
+        border-color: #4a739e;
+      }
       .graph-scroll.overview {
         max-height: none;
+        overflow: hidden;
       }
       .graph-scroll.overview .artifact-dag {
         width: 100% !important;
         min-width: 0;
+        max-height: min(620px, calc(100svh - 250px));
+        margin-inline: auto;
       }
       .graph-hint {
         color: #536270;
@@ -427,6 +441,7 @@
         .graph-scroll .artifact-dag {
           width: 100% !important;
           min-width: 0 !important;
+          max-height: none;
         }
       }
 
@@ -474,7 +489,9 @@
         margin: 24px 0;
       }
       .publication-figure svg {
-        min-width: 740px;
+        min-width: 0;
+        max-width: 920px;
+        margin-inline: auto;
       }
       .publication-figure figcaption {
         font-size: 14px;
@@ -548,11 +565,12 @@
         <h1>진행 보고</h1>
         <span class="approval">기술·전체 DAG 합의 · 사용자 확인 완료</span>
         <p class="lead">
-          준비된 항목부터 가공·검토·게시를 이어갑니다. 운영 준비와 전체 자료
-          처리는 병행하며, 필요한 산출물에 따라 담당을 나눕니다.
+          추가 포팅에 앞서 공개 글 44개 전체의 가독성·구성·내용 선별과 가공
+          프롬프트를 개선·검수합니다. 후보·작성 배치와 추가 게시를 멈췄으며,
+          운영 확인은 별도로 병행할 수 있습니다.
         </p>
         <p class="meta">
-          문서 편집 2026-10-03 15:29 KST · 공개 수 관측 2026-10-03 14:25 KST ·
+          문서 편집 2026-10-03 15:53 KST · 공개 수 관측 2026-10-03 14:25 KST ·
           운영 Google 서버 확인 14:34 KST · 공개 44개 · 코드 검증 e1b1a0f·606개
         </p>
         <p class="meta">
@@ -576,7 +594,10 @@
         <p>
           현재 공개 글은 <strong>44개</strong>입니다. 직전 43개에서 허용된 두
           번째 검사로 1개가 추가됐고, 새 글 상세는 1440·390·320px에서
-          통과했습니다.
+          통과했습니다. 현재는
+          <a href="#latest-editorial-review">44개 전체의 품질 검수</a>를 먼저
+          진행하며 추가 포팅·게시를 중단했습니다. 새 프롬프트와 품질 기준의 검수
+          통과는 아직 확인하지 않았습니다.
           <a href="#latest-operating-google">운영 Google 로그인</a>은 사용자
           화면 확인과 서버의 계정 연결·새 세션 근거로 완료했습니다. 전체 자료
           가공·운영 메일 스팸 분류와 원격 복구·장비 재부팅 후 자동 시작은 남아
@@ -608,15 +629,43 @@
             >
           </article>
           <article>
-            <h3>이번 선택분의 미확정</h3>
-            <strong>1개</strong>
-            <p>선택 33개 중 기존 1개 보존·신규 31개 공개·미확정 1개입니다.</p>
+            <h3>현재 품질 검수 대상</h3>
+            <strong>44개</strong>
+            <p>가독성·구성·내용 선별과 가공 프롬프트를 개선·검수 중입니다.</p>
             <small
-              >전체 자료 집계와 구분합니다. ·
-              <a href="#parallel">다음 작업</a></small
+              >새 기준의 통과 판정은 아직 없습니다. ·
+              <a href="#latest-editorial-review">진행 범위</a></small
             >
           </article>
         </div>
+        <p id="latest-editorial-review">
+          사용자 최신 지시에 따라 추가 포팅 전에 현재 공개 44개 전체를
+          검수합니다. 메인은 fluent-korean을 적용해 모두 읽고 대화 경과를
+          보고하는 문체, 불필요한 꼬리 설명, 어조 혼용, 단락·목록 부족을
+          확인했습니다. 글별 진단을 새 작성 프롬프트와 v4 품질 기준에 반영해
+          실제 결과를 검수하는 단계입니다. v8 독립 검토는 수정 필요 상태이며
+          작업 중인 후속 v9 수정본도 44개 검수 통과나 게시 완료로 판정하지
+          않습니다.
+          <a href="../data/editorial-readability-20261003/audit-44.private.json"
+            >44개 글별 진단</a
+          >
+          ·
+          <a
+            href="../data/editorial-readability-20261003/review-v8.private.json"
+            >v8 수정 요청</a
+          >. 44개 검수 통과 후 나머지 일괄 가공·독립 검토를 재개하고, 임포트
+          전에 가공 결과와 현재 공개 글을 함께 대상으로 벌크 중복 검사를
+          진행합니다. 전체 가공과 새 품질 검수는 미완료입니다.
+        </p>
+        <p id="latest-pipeline-control">
+          메인 보고에 따르면 기존 후보·작성 배치는 unified 세션과 실제 PID로
+          실행을 확인한 뒤 메인이 소유한 두 프로세스 트리만 종료했습니다. 앞선
+          모니터의 프로세스 0 보고는 명령줄에 저장소 절대경로가 없어서 생긴
+          오판이었습니다. 경로 문자열 검색 결과만으로 실행 여부를 판정하지
+          않습니다. 추가 포팅용 배치와 신규 게시는 중단했으며, 44개 품질 검수용
+          재작성과 구분합니다. 이 보고서 담당은 프로세스를 추가로 종료하거나
+          운영 DB를 변경하지 않았습니다.
+        </p>
         <p id="latest-publication-retry">
           2026-10-03 14:25 KST 운영 공개 글은 43개에서 44개로 늘었습니다. 앞선
           미확정 2개를 시도 횟수 초기화 없이 허용된 두 번째 검사로 확인해 1개가
@@ -646,8 +695,10 @@
         <h3>다음 완료 조건</h3>
         <ul class="remaining">
           <li>
-            전체 후보의 가공·검토·게시를 마치고 보류·미해결 범위까지 집계해야
-            합니다. 이번 선택분 33개를 전체 원자료의 분모로 사용하지 않습니다.
+            공개 44개와 새 가공 프롬프트·품질 기준의 검수를 먼저 통과해야
+            합니다. 이후 나머지 일괄 가공·독립 검토와 임포트 전 벌크 중복 검사를
+            마치고 보류·미해결 범위까지 집계합니다. 기존 선택분 33개는 전체
+            원자료의 분모가 아닙니다.
           </li>
           <li>
             운영 주소 메일의 도착 위치와 실제 회원 쓰기·세션별 접근을 확인해야
@@ -660,9 +711,9 @@
           </li>
         </ul>
         <p>
-          준비된 후보의 작성은 다른 후보의 문맥 복구나 전체 추출 완료를 기다리지
-          않습니다. 운영 메일·회원 흐름 확인과 원격 복구 준비도 자료 가공과
-          병행할 수 있습니다.
+          지금은 44개 진단에 따른 작성 기준 개선과 품질 게이트 검증, 운영
+          메일·회원 흐름 확인, 원격 복구 준비를 나눠 병행할 수 있습니다. 추가
+          포팅·게시의 재개는 44개 검수 통과를 기다립니다.
           <a href="#parallel">각 작업의 입력·결과·다음 소비 단계</a>를 기준으로
           배정합니다.
         </p>
@@ -1075,35 +1126,31 @@
           기다리는 순서가 아닙니다. 작업을 누르면 상세 입력·출력과 코드 근거를
           볼 수 있습니다.
         </p>
-        <p>
-          T4와 T5에서 T7로 들어가는 후보는 OR입니다. T2의 최소화 근거·발화
-          순서는 함께 필요한 입력입니다. T6은 아직 연결해야 할 참조 복원
-          계약이며, 참조가 필요한 후보에만 적용합니다. 점선의 적용 조건은 간선
-          표에 명시했습니다.
-        </p>
-        <p>
-          문맥 복구 기록이나 메시지 미해결 수가 개선됐다는 사실만으로 후보가
-          편집 적격이 되지는 않습니다. <code>8cc6522</code>는 같은
-          배치·입력/출력 버전·대상 범위를 모두 덮는 완전 복구에 한정해 보류를
-          해제하며 모호한 연결과 후속 미해결을 유지합니다. 구현·검수는 완료됐고
-          실제 후보의 집계 <code>needsContext=false</code>를 확인한 뒤
-          편집합니다. 전체 자료의 문맥 복구 완료와 구분합니다.
-        </p>
-        <p>
-          진전은 구현 여부와 기존 보고서의 부분 실행 기록을 구분했습니다. 이번
-          DAG 조사에서는 실제 자료 처리·DB 조회·게시를 다시 실행하지 않았습니다.
-          전자료 의미 검토와 게시 완료를 선언하지 않습니다.
-        </p>
-        <button
-          type="button"
-          class="graph-mode"
-          data-graph-mode="technical-dependency-graph"
-          aria-pressed="false"
-        >
-          전체 보기
-        </button>
+
+        <div class="graph-toolbar" role="group" aria-label="기술 DAG 보기 방식">
+          <button
+            type="button"
+            class="graph-mode"
+            data-graph-mode="technical-dependency-graph"
+            data-overview="true"
+            aria-controls="technical-dependency-graph"
+            aria-pressed="true"
+          >
+            전체 보기
+          </button>
+          <button
+            type="button"
+            class="graph-mode"
+            data-graph-mode="technical-dependency-graph"
+            data-overview="false"
+            aria-controls="technical-dependency-graph"
+            aria-pressed="false"
+          >
+            상세 보기
+          </button>
+        </div>
         <div
-          class="graph-scroll"
+          class="graph-scroll overview"
           tabindex="0"
           aria-label="기술 DAG: 카톡 자료에서 사이트 게시까지"
         >
@@ -1813,8 +1860,27 @@
           </svg>
         </div>
         <p class="graph-hint">
-          작업을 누르면 입력·출력 계약과 근거로 이동합니다. 전체 보기로 구조를
-          보고, 글자 크기로 보기에서 그래프 안을 이동해 읽을 수 있습니다.
+          전체 보기는 그래프 전체를 화면에 맞춥니다. 상세 보기에서는 그래프 안을
+          이동하며 읽습니다. 작업을 누르면 입력·출력 계약과 근거로 이동합니다.
+        </p>
+        <p>
+          T4와 T5에서 T7로 들어가는 후보는 OR입니다. T2의 최소화 근거·발화
+          순서는 함께 필요한 입력입니다. T6은 아직 연결해야 할 참조 복원
+          계약이며, 참조가 필요한 후보에만 적용합니다. 점선의 적용 조건은 간선
+          표에 명시했습니다.
+        </p>
+        <p>
+          문맥 복구 기록이나 메시지 미해결 수가 개선됐다는 사실만으로 후보가
+          편집 적격이 되지는 않습니다. <code>8cc6522</code>는 같은
+          배치·입력/출력 버전·대상 범위를 모두 덮는 완전 복구에 한정해 보류를
+          해제하며 모호한 연결과 후속 미해결을 유지합니다. 구현·검수는 완료됐고
+          실제 후보의 집계 <code>needsContext=false</code>를 확인한 뒤
+          편집합니다. 전체 자료의 문맥 복구 완료와 구분합니다.
+        </p>
+        <p>
+          진전은 구현 여부와 기존 보고서의 부분 실행 기록을 구분했습니다. 이번
+          DAG 조사에서는 실제 자료 처리·DB 조회·게시를 다시 실행하지 않았습니다.
+          전자료 의미 검토와 게시 완료를 선언하지 않습니다.
         </p>
         <details>
           <summary>작업별 입력·출력·진전과 간선 근거</summary>
@@ -2513,34 +2579,31 @@
           운영 DB 준비 F와 서버 연결 G를 나눠, 빌드·DB·설정이 실제 어디에서
           소비되는지 표시했습니다.
         </p>
-        <p>
-          D→E는 검증에 새 게시본을 포함할 때, D→F는 최초 DB 복사에 새 게시본을
-          포함할 때 적용합니다. 기존 공개본과 기존 DB로 사이트·운영 준비를
-          시작할 수 있습니다. 최초 복사 이후 원래 DB의 게시물이 운영 DB에 자동
-          반영되지는 않습니다.
-        </p>
-        <p>
-          G→H는 운영 Google 인증 완주에 필요한 HTTPS origin/callback입니다.
-          메일·공급자 설정 준비 자체가 G 전체 완료를 기다리는 것은 아닙니다. I의
-          검증 근거는 인수 판정의 입력이며 서버 게시 코드가 읽는 가상 영수증
-          파일이 아닙니다.
-        </p>
-        <p>
-          전자료 마감은 처리 경로 밖의 관측 종점입니다. ledger/outputs,
-          복구·미해결, draft 보류, 독립 검토, 현재 게시·보류 상태를 대조합니다.
-          중간 누적 집계를 다음 배치의 선행 조건으로 삼거나 서로 다른 단위의
-          수치를 한 진행률로 합치지 않습니다.
-        </p>
-        <button
-          type="button"
-          class="graph-mode"
-          data-graph-mode="dependency-graph"
-          aria-pressed="false"
-        >
-          전체 보기
-        </button>
+
+        <div class="graph-toolbar" role="group" aria-label="전체 DAG 보기 방식">
+          <button
+            type="button"
+            class="graph-mode"
+            data-graph-mode="dependency-graph"
+            data-overview="true"
+            aria-controls="dependency-graph"
+            aria-pressed="true"
+          >
+            전체 보기
+          </button>
+          <button
+            type="button"
+            class="graph-mode"
+            data-graph-mode="dependency-graph"
+            data-overview="false"
+            aria-controls="dependency-graph"
+            aria-pressed="false"
+          >
+            상세 보기
+          </button>
+        </div>
         <div
-          class="graph-scroll"
+          class="graph-scroll overview"
           tabindex="0"
           aria-label="전체 작업 DAG: 자료·사이트·운영 산출물 연결"
         >
@@ -3114,8 +3177,26 @@
           </svg>
         </div>
         <p class="graph-hint">
-          작업을 누르면 입력·출력 계약과 근거로 이동합니다. 전체 보기로 구조를
-          보고, 글자 크기로 보기에서 그래프 안을 이동해 읽을 수 있습니다.
+          전체 보기는 그래프 전체를 화면에 맞춥니다. 상세 보기에서는 그래프 안을
+          이동하며 읽습니다. 작업을 누르면 입력·출력 계약과 근거로 이동합니다.
+        </p>
+        <p>
+          D→E는 검증에 새 게시본을 포함할 때, D→F는 최초 DB 복사에 새 게시본을
+          포함할 때 적용합니다. 기존 공개본과 기존 DB로 사이트·운영 준비를
+          시작할 수 있습니다. 최초 복사 이후 원래 DB의 게시물이 운영 DB에 자동
+          반영되지는 않습니다.
+        </p>
+        <p>
+          G→H는 운영 Google 인증 완주에 필요한 HTTPS origin/callback입니다.
+          메일·공급자 설정 준비 자체가 G 전체 완료를 기다리는 것은 아닙니다. I의
+          검증 근거는 인수 판정의 입력이며 서버 게시 코드가 읽는 가상 영수증
+          파일이 아닙니다.
+        </p>
+        <p>
+          전자료 마감은 처리 경로 밖의 관측 종점입니다. ledger/outputs,
+          복구·미해결, draft 보류, 독립 검토, 현재 게시·보류 상태를 대조합니다.
+          중간 누적 집계를 다음 배치의 선행 조건으로 삼거나 서로 다른 단위의
+          수치를 한 진행률로 합치지 않습니다.
         </p>
         <details>
           <summary>작업별 입력·출력·진전과 간선 근거</summary>
@@ -3645,6 +3726,12 @@
 
       <section id="parallel" aria-labelledby="audit-heading">
         <h2 id="audit-heading">산출물이 준비된 작업의 병렬 배정</h2>
+        <p>
+          현재 우선 작업은 공개 44개와 작성 기준의 품질 검수입니다. 추가 포팅용
+          후보·작성 배치와 신규 게시는 중단했습니다. 표의 자료 의존성은
+          유지하며, 검수용 재작성·품질 게이트·운영 확인은 담당과 파일 소유권을
+          나눠 병행할 수 있습니다.
+        </p>
         <div class="table-scroll">
           <table class="parallel-table">
             <caption>
@@ -3682,9 +3769,9 @@
                 <td>기존 outputs/후보/미해결 대상과 jobs의 주변 최소화 근거</td>
                 <td>
                   8cc6522에서 완전 복구에 한정한 보류 해제 구현·검수를
-                  마쳤습니다. 같은 버전의 실제 집계 false를 확인해 준비된 후보의
-                  편집을 진행하고, 다른 미해결 대상의 복구는 병행합니다. 전체
-                  후보 완료는 계속 집계합니다.
+                  마쳤습니다. 같은 버전의 실제 집계 false와 근거가 편집의
+                  입력이지만, 추가 포팅은 44개 품질 검수 통과 전까지 중단합니다.
+                  현재 검수 대상의 부족한 문맥 확인은 별도로 진행할 수 있습니다.
                 </td>
                 <td>
                   <a href="#technical-task-T7">T7 작성</a>: 같은 입력·출력
@@ -3693,23 +3780,24 @@
                 </td>
               </tr>
               <tr>
-                <th scope="row">T7/T13 준비 후보·기존본 재작성</th>
+                <th scope="row">T7/T13 공개 44개 재작성·품질 검수</th>
                 <td>
-                  needsContext=false가 확인된 후보·근거·순서 또는 기존 공개본의
-                  재작성 대상
+                  현재 공개 44개와 글별 진단, 해당 원자료의 근거·순서, 새 작성
+                  프롬프트와 v4 품질 기준
                 </td>
                 <td>
-                  독립 통과 53개에서 편집 제외 20개·선택 33개를 확인했습니다.
-                  현재 기존 1개 보존·신규 합계 31개 공개·미확정 1개·오류 0개이며
-                  운영 공개 수는 44개입니다. 메인은 후보 배치와 작성 배치를 각각
-                  1개 재개했다고 보고했습니다. 현재 동시 실행·정상 종료 여부는
-                  실행 ID와 최신 산출물로 확인해야 합니다.
+                  <a href="#latest-editorial-review">44개 품질 검수</a>가
+                  우선입니다. 글별 진단은 새 작성 결과와 독립 검토의 입력입니다.
+                  v8 수정 요청과 후속 수정본 검수는 진행 중이며 전체 통과 판정은
+                  없습니다. 기존 추가 포팅용 후보·작성 두 배치는 메인이 실제
+                  세션·PID로 확인한 뒤 중지했습니다. 신규 게시는 하지 않습니다.
                 </td>
                 <td>
                   <a href="#technical-task-T8">T8 정규화</a> →
                   <a href="#technical-task-T9">T9 독립 검토</a>: 공개
-                  본문·근거·품질 버전·해시가 일치해야 합니다. 변경한 본문은 새
-                  검토를 받습니다.
+                  본문·근거·품질 버전·해시가 일치해야 합니다. 44개 검수 통과 후
+                  나머지를 일괄 가공·독립 검토하고, 임포트 전에 전체 대상의 벌크
+                  중복 검사 결과를 넘깁니다. 변경한 본문은 새 검토를 받습니다.
                 </td>
               </tr>
               <tr>
@@ -3775,10 +3863,11 @@
           생존·종료·최신 산출물과 변경 파일을 보고해야 합니다.
         </p>
         <p>
-          현재 all 실행의 후보 풀→편집 풀→직렬 게시 대기는 실행기 장벽입니다.
-          논리적으로는 서로 다른 준비 후보의 추출·복구·편집을 병행할 수
-          있습니다. 단계 대기를 없앨 때는 해당 패킷/후보가 준비됐는지로 진행을
-          결정합니다.
+          일반 처리에서 all 실행의 후보 풀→편집 풀→직렬 게시 대기는 실행기
+          장벽이며 준비된 항목별로 분리할 수 있습니다. 현재는 사용자 지시에 따른
+          44개 품질 검수가 재개 조건입니다. 이를 통과하기 전까지 추가
+          포팅·게시를 진행하지 않습니다. 운영 확인이나 검수 도구 준비가 같은
+          대기를 공유할 필요는 없습니다.
         </p>
         <p>
           native와 context의 import 직렬화는 각 runner 내부에만 적용됩니다. 별도
@@ -3844,6 +3933,15 @@
       <details id="verification" class="appendix prose">
         <summary>검증 기록</summary>
         <h3>임시 운영 구현 검증</h3>
+        <p>
+          현재 자료 작업은
+          <a href="#latest-editorial-review">공개 44개 품질 검수</a> 단계입니다.
+          아래 서버·화면·게시 검증은 이전 구현과 당시 공개본의 근거이며, 새
+          프롬프트·v4 품질 기준 또는 44개 재작성의 통과 근거가 아닙니다. 추가
+          포팅·게시 중단은
+          <a href="#latest-pipeline-control">메인의 실행 확인 보고</a>로
+          구분합니다.
+        </p>
         <p>
           현재 운영 공개 수는 44개이며 검증한 코드 기준은
           <code>e1b1a0f</code>·606개 검사입니다. 43개 당시 신규 30개가 포함된
@@ -4135,8 +4233,9 @@
         <h4>남은 실제 운영 확인</h4>
         <ul>
           <li>
-            나머지 전체 후보의 가공·검토·게시와 미해결·보류 범위에 대한 최종
-            집계를 마쳐야 합니다.
+            공개 44개와 새 작성 기준의 검수를 먼저 통과해야 합니다. 이후 나머지
+            일괄 가공·독립 검토, 임포트 전 벌크 중복 검사와 미해결·보류 범위의
+            최종 집계를 마쳐야 합니다.
           </li>
           <li>
             실제 회원의 외부 쓰기와 인증된 세션별 접근 검수를 확인해야 합니다.
@@ -4587,12 +4686,13 @@
         <summary>보고서 갱신 기준과 참고한 다른 프로젝트</summary>
         <h3>이번 보고서의 검증</h3>
         <p id="report-validation">
-          2026-10-03 15:14 KST 헤드리스 Chromium의 1440·390·320px에서 페이지
-          넘침·콘솔 오류 없이 키보드 이동, 접힌 과거 근거 열기, 가로 표 스크롤과
-          모든 참고 파일 링크를 확인했습니다. 승인된 기술 DAG 13개 작업·18개
-          간선과 전체 DAG 10개 작업·15개 간선의 SVG·상세 계약·합의 본문을
-          보존했습니다. 이 확인은 보고서의 표시·연결 검수입니다. 운영
-          화면·재시작·복구의 확인 범위는 각 시점의 근거를 따릅니다.
+          2026-10-03 15:51 KST 헤드리스 Chromium의 1440·390·320px에서 기본 전체
+          보기와 DAG 목차 이동, 접힌 과거 근거 열기, 가로 표 스크롤과 모든 참고
+          파일 링크를 페이지 넘침·콘솔 오류 없이 확인했습니다. 승인된 기술 DAG
+          13개 작업·18개 간선과 전체 DAG 10개 작업·15개 간선의 SVG·상세
+          계약·합의 본문을 보존했습니다. 이 확인은 보고서의 표시·연결
+          검수입니다. 운영 화면·재시작·복구의 확인 범위는 각 시점의 근거를
+          따릅니다.
         </p>
         <p>
           보고서의 코드 기준 <code>e1b1a0f</code>와 코드가 같은
@@ -4777,9 +4877,14 @@
       document.querySelectorAll("[data-graph-mode]").forEach((button) =>
         button.addEventListener("click", () => {
           const svg = document.getElementById(button.dataset.graphMode);
-          const overview = svg.parentElement.classList.toggle("overview");
-          button.setAttribute("aria-pressed", String(overview));
-          button.textContent = overview ? "글자 크기로 보기" : "전체 보기";
+          const overview = button.dataset.overview === "true";
+          svg.parentElement.classList.toggle("overview", overview);
+          svg.parentElement.scrollTo({ top: 0, left: 0 });
+          document
+            .querySelectorAll(`[data-graph-mode="${svg.id}"]`)
+            .forEach((control) => {
+              control.setAttribute("aria-pressed", String(control === button));
+            });
         }),
       );
 
