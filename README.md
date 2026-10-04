@@ -47,6 +47,10 @@ Google 콜백은 `BETTER_AUTH_URL`의 origin에 `/api/auth/callback/google`을 �
 
 임시 운영은 Windows의 Node 서버·SQLite와 Cloudflare Tunnel을 연결하는 방식으로 준비했습니다. 현재 상태·병렬 작업 DAG·검증·합의 기록은 [중간보고서](docs/progress.html)에서 관리하고, 구현 선택과 실패·수정의 교훈은 [개발기](docs/development.html)에서 설명합니다.
 
+신고 접수 목록은 이메일 인증을 마친 지정 운영자만 읽을 수 있습니다. 게시 편집 계정과 별도로 신고를 검토할 실제 계정은 `REPORT_REVIEWER_USER_ID`에 정확한 사용자 ID를 설정합니다. 이 설정은 신고 조회 권한만 부여합니다.
+
+Windows에서 `powershell.exe -NoProfile -File scripts/install-production-startup.ps1`을 실행하면 현재 사용자의 로그인 후 숨김 실행을 등록합니다. 이미 실행 중인 감독 프로세스가 있으면 그대로 유지합니다. 이 연결의 실행 시점은 [Windows의 로그인 후 실행 규칙](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)을 따르며, 로그온 전 부팅과 실제 재부팅 검증은 별도입니다.
+
 ## 폴더
 
 ```text
