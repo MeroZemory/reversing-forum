@@ -1,4 +1,4 @@
-import { spawn, execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   readFileSync,
@@ -21,7 +21,6 @@ import {
   batchModelAllocation,
 } from "../src/server/chat-pipeline/relative-context";
 import { createInterface } from "node:readline";
-import { promisify } from "node:util";
 import {
   batchCliEnvironment,
   isolatedBatchCatalog,
@@ -35,9 +34,15 @@ import {
   cliDiagnosticCodes,
   privateCliDiagnostic,
   PROXY_BASIS,
-  type ModelBudgetConfig,
   type BatchMode,
 } from "../src/server/chat-pipeline/model-budget";
+
+import {
+  cliAccountAvailable,
+  cliAccountEnvironment,
+  cliAccountUsesPinnedHome,
+  type CliAccountConfig,
+} from "../src/server/chat-pipeline/cli-account";
 
 // Pipeline-only overrides; never changes user/project model settings.
 const mode = process.argv[2] as BatchMode;
@@ -57,8 +62,7 @@ mkdirSync(join(directory, "codex-logs"), { recursive: true });
 const npmDirectory = resolve(process.env.APPDATA || "", "npm/node_modules");
 const codexEntry = join(npmDirectory, "@openai/codex/bin/codex.js");
 const ocxEntry = join(npmDirectory, "@bitkyc08/opencodex/bin/ocx.mjs");
-if (!existsSync(codexEntry) || !existsSync(ocxEntry))
-  throw new Error("cli-not-found");
+if (!existsSync(codexEntry)) throw new Error("cli-not-found");
 const allocation = JSON.parse(
   readFileSync(
     resolve(
@@ -67,7 +71,7 @@ const allocation = JSON.parse(
     ),
     "utf8",
   ),
-) as ModelBudgetConfig;
+) as CliAccountConfig;
 const ledger = new ModelBudget(
   resolve(
     process.env.CHAT_MODEL_BUDGET_PATH ||
@@ -75,40 +79,29 @@ const ledger = new ModelBudget(
   ),
   allocation,
 );
-const execute = promisify(execFile);
-const env = batchCliEnvironment();
+const env = cliAccountEnvironment(allocation, batchCliEnvironment());
+if (
+  (allocation.codexHome !== undefined ||
+    allocation.codexAccountFingerprint !== undefined ||
+    !existsSync(ocxEntry)) &&
+  !(await activeAccount())
+)
+  throw new Error("account-unavailable-or-changed");
+const pinnedHome = await cliAccountUsesPinnedHome(allocation, env);
 async function activeAccount() {
-  const { stdout } = await execute(
-    process.execPath,
-    [
-      ocxEntry,
-      "account",
-      "list",
-      "openai",
-      ...(allocation.allowCreditUsage === true ? [] : ["--quota"]),
-      "--json",
-    ],
-    {
-      windowsHide: true,
-      encoding: "utf8",
-      // A local OCX startup can exceed 30 seconds under shared machine load.
-      timeout: 60_000,
-      maxBuffer: 1_000_000,
-      // Allow a busy local proxy to prove liveness before querying its account.
-      env: { ...env, OCX_PROBE_TIMEOUT_MS: "5000" },
-    },
+  return cliAccountAvailable(
+    allocation,
+    { ...env, OCX_PROBE_TIMEOUT_MS: "5000" },
+    ocxEntry,
+    { timeout: 60_000 },
   );
-  const active = JSON.parse(stdout).accounts.filter(
-    (a: { active: boolean }) => a.active === true,
-  );
-  return active.length === 1 ? active[0] : undefined;
 }
 // Inspect only TOML section names. Never extract/print config values or credentials.
 async function mcpOverrides(): Promise<string[]> {
   const paths = new Set<string>();
   paths.add(
     join(
-      process.env.CODEX_HOME || join(process.env.USERPROFILE || "", ".codex"),
+      env.CODEX_HOME || join(process.env.USERPROFILE || "", ".codex"),
       "config.toml",
     ),
   );
@@ -200,9 +193,7 @@ try {
     effort,
   );
   const active = await activeAccount();
-  if (
-    !accountAvailable(active, allocation.accountId, allocation.allowCreditUsage)
-  ) {
+  if (!active) {
     console.log(
       JSON.stringify({
         started: false,
@@ -270,6 +261,7 @@ try {
       const attemptOutputPath = createCodexAttemptOutput(
         join(directory, "codex-logs"),
       );
+      const overrides = pinnedHome ? await mcpOverrides() : [];
       const child = spawn(
         process.execPath,
         [
@@ -280,8 +272,11 @@ try {
           "--sandbox",
           "read-only",
           "--skip-git-repo-check",
-          "--ignore-user-config",
+          ...(pinnedHome ? [] : ["--ignore-user-config"]),
           "--ignore-rules",
+          ...(pinnedHome
+            ? ["-c", 'developer_instructions=""', "-c", "notify=[]"]
+            : []),
           ...disabled.flatMap((feature) => ["--disable", feature]),
           "-c",
           "features.code_mode=false",
@@ -293,6 +288,7 @@ try {
           `model_catalog_json=${JSON.stringify(catalog.path)}`,
           "-c",
           "mcp_servers={}",
+          ...overrides,
           "-c",
           'web_search="disabled"',
           "--model",
@@ -363,13 +359,7 @@ try {
         checking = true;
         pendingCheck = activeAccount()
           .then((account) => {
-            if (
-              !accountAvailable(
-                account,
-                allocation.accountId,
-                allocation.allowCreditUsage,
-              )
-            ) {
+            if (!account) {
               stop("account-unavailable-or-changed");
             }
           })
@@ -409,11 +399,13 @@ try {
         }
         // Retry lookup errors only; a fresh unavailable/changed account is final.
         if (
-          !accountAvailable(
-            account,
-            allocation.accountId,
-            allocation.allowCreditUsage,
-          )
+          account === false ||
+          (account !== true &&
+            !accountAvailable(
+              account,
+              allocation.accountId,
+              allocation.allowCreditUsage,
+            ))
         )
           stop("account-unavailable-or-changed");
         else finalAccountConfirmed = true;

@@ -10,12 +10,17 @@ import {
   ModelBudget,
   CodexUsageCollector,
   mcpServerName,
-  accountAvailable,
   reservationProxyUsd,
   cliDiagnosticCodes,
   type ModelBudgetConfig,
   type BudgetModel,
 } from "../chat-pipeline/model-budget";
+import {
+  cliAccountAvailable,
+  cliAccountEnvironment,
+  cliAccountUsesPinnedHome,
+  type CliAccountConfig,
+} from "../chat-pipeline/cli-account";
 import { stopCodexProcess } from "../chat-pipeline/relative-context";
 
 type Post = { title: string; body: string; tags: string[] };
@@ -289,10 +294,13 @@ function validate(value: unknown, s: Snapshot): Verdict | null {
   return verdict;
 }
 
-async function mcpOverrides(directory: string): Promise<string[]> {
+async function mcpOverrides(
+  directory: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
   const paths = new Set([
     join(
-      process.env.CODEX_HOME || join(process.env.USERPROFILE || "", ".codex"),
+      env.CODEX_HOME || join(process.env.USERPROFILE || "", ".codex"),
       "config.toml",
     ),
   ]);
@@ -319,7 +327,7 @@ async function mcpOverrides(directory: string): Promise<string[]> {
   }
   if ([...names].some((n) => !/^[A-Za-z0-9_-]+$/.test(n)))
     throw new Error("mcp-name");
-  // User config is excluded at launch. Give discovered disabled entries a valid,
+  // Give discovered disabled entries a valid,
   // inert transport so CLI validation cannot mistake them for incomplete servers.
   return [...names].flatMap((n) => [
     "-c",
@@ -350,44 +358,6 @@ function cliEnvironment(): NodeJS.ProcessEnv {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   return env;
 }
-async function account(
-  ocx: string,
-  env: NodeJS.ProcessEnv,
-  accountId: string,
-  directory: string,
-  allowCreditUsage = false,
-) {
-  const stdout = await new Promise<string>((done, reject) => {
-    execFile(
-      process.execPath,
-      [
-        ocx,
-        "account",
-        "list",
-        "openai",
-        ...(allowCreditUsage === true ? [] : ["--quota"]),
-        "--json",
-      ],
-      {
-        windowsHide: true,
-        encoding: "utf8",
-        timeout: 15_000,
-        maxBuffer: 1_000_000,
-        env,
-        cwd: directory,
-      },
-      (error, stdout) => (error ? reject(new Error("account")) : done(stdout)),
-    );
-  });
-  const data: unknown = JSON.parse(stdout);
-  if (!object(data) || !Array.isArray(data.accounts)) return false;
-  const active = data.accounts.filter((a) => object(a) && a.active === true);
-  return (
-    active.length === 1 &&
-    accountAvailable(active[0], accountId, allowCreditUsage)
-  );
-}
-
 async function isolatedCatalog(
   codex: string,
   directory: string,
@@ -714,7 +684,7 @@ export async function judgeWithLlm(
     const npm = resolve(process.env.APPDATA || "", "npm/node_modules");
     const codex = join(npm, "@openai/codex/bin/codex.js");
     const ocx = join(npm, "@bitkyc08/opencodex/bin/ocx.mjs");
-    if (!existsSync(codex) || !existsSync(ocx)) return uncertain();
+    if (!existsSync(codex)) return uncertain();
     const shared = resolve("data/chat-pipeline");
     const config = JSON.parse(
       await readFile(
@@ -725,7 +695,7 @@ export async function judgeWithLlm(
         ),
         "utf8",
       ),
-    ) as ModelBudgetConfig;
+    ) as CliAccountConfig;
     ledger = new ModelBudget(
       resolve(
         /* turbopackIgnore: true */
@@ -751,8 +721,16 @@ export async function judgeWithLlm(
       verdict: "uncertain",
       stage: "isolation",
     };
-    const overrides = await mcpOverrides(directory);
-    const env = cliEnvironment();
+    const env = cliAccountEnvironment(config, cliEnvironment());
+    if (
+      (config.codexHome !== undefined ||
+        config.codexAccountFingerprint !== undefined ||
+        !existsSync(ocx)) &&
+      !(await cliAccountAvailable(config, env, ocx, { cwd: directory }))
+    )
+      return uncertain();
+    const pinnedHome = await cliAccountUsesPinnedHome(config, env);
+    const overrides = await mcpOverrides(directory, env);
     receipt.stage = "catalog";
     const catalog = await isolatedCatalog(codex, directory, env, model, effort);
     // Conservative static envelope estimate; this padding is never model input.
@@ -763,15 +741,7 @@ export async function judgeWithLlm(
       return uncertain();
     }
     receipt.stage = "account-before";
-    if (
-      !(await account(
-        ocx,
-        env,
-        config.accountId,
-        directory,
-        config.allowCreditUsage,
-      ))
-    ) {
+    if (!(await cliAccountAvailable(config, env, ocx, { cwd: directory }))) {
       receipt.diagnosticCodes = ["account-unavailable-or-changed"];
       return uncertain();
     }
@@ -891,10 +861,12 @@ export async function judgeWithLlm(
         "--sandbox",
         "read-only",
         "--skip-git-repo-check",
-        // Installed CLI supports these: preserve auth location while excluding
-        // inherited user configuration and ancestor AGENTS/skill instructions.
-        "--ignore-user-config",
+        // A verified pinned home retains its transport; rule loading stays disabled.
+        ...(pinnedHome ? [] : ["--ignore-user-config"]),
         "--ignore-rules",
+        ...(pinnedHome
+          ? ["-c", 'developer_instructions=""', "-c", "notify=[]"]
+          : []),
         ...disabled.flatMap((f) => ["--disable", f]),
         // Explicit counterparts prevent inherited code-mode requirements from
         // surviving feature-disable processing in this installed CLI.
@@ -935,13 +907,7 @@ export async function judgeWithLlm(
     if (
       result.failed ||
       result.code !== 0 ||
-      !(await account(
-        ocx,
-        env,
-        config.accountId,
-        directory,
-        config.allowCreditUsage,
-      ))
+      !(await cliAccountAvailable(config, env, ocx, { cwd: directory }))
     )
       return uncertain();
     const settled = ledger.settle(
