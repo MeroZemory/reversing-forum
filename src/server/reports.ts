@@ -19,8 +19,9 @@ export async function canReviewReports() {
   return Boolean(
     user &&
     user.emailVerified &&
-    process.env.EDITOR_USER_ID &&
-    user.id === process.env.EDITOR_USER_ID,
+    ((process.env.EDITOR_USER_ID && user.id === process.env.EDITOR_USER_ID) ||
+      (process.env.REPORT_REVIEWER_USER_ID &&
+        user.id === process.env.REPORT_REVIEWER_USER_ID)),
   );
 }
 export async function submitReport(input: unknown) {

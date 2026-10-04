@@ -8,6 +8,7 @@ let db: (typeof import("@/server/db"))["db"],
 const saved = {
   database: process.env.DATABASE_PATH,
   editor: process.env.EDITOR_USER_ID,
+  reviewer: process.env.REPORT_REVIEWER_USER_ID,
   origin: process.env.BETTER_AUTH_URL,
 };
 const member = (id = "member"): Viewer => ({
@@ -26,6 +27,8 @@ beforeAll(async () => {
   post = await import("@/app/api/reports/route");
 });
 beforeEach(() => {
+  process.env.EDITOR_USER_ID = "operator";
+  delete process.env.REPORT_REVIEWER_USER_ID;
   current.user = member();
   db.exec("DELETE FROM reports; DELETE FROM posts;");
   const insert = db.prepare(
@@ -49,6 +52,7 @@ afterAll(() => {
   for (const [key, value] of Object.entries({
     DATABASE_PATH: saved.database,
     EDITOR_USER_ID: saved.editor,
+    REPORT_REVIEWER_USER_ID: saved.reviewer,
     BETTER_AUTH_URL: saved.origin,
   })) {
     if (value === undefined) delete process.env[key];
@@ -154,6 +158,89 @@ it("keeps the inbox operator-only, including for a report's own author", async (
   ).run();
   expect((await reports.loadOperatorReports())[0].postTitle).toBeNull();
 });
+it.each([
+  ["verified editor", "operator", true, "operator", "reviewer", true],
+  ["verified reviewer", "reviewer", true, "operator", "reviewer", true],
+  ["anonymous session", null, true, "operator", "reviewer", false],
+  ["unverified editor", "operator", false, "operator", "reviewer", false],
+  ["unverified reviewer", "reviewer", false, "operator", "reviewer", false],
+  ["report author", "member", true, "operator", "reviewer", false],
+  ["other account", "other", true, "operator", "reviewer", false],
+  [
+    "editor without reviewer setting",
+    "operator",
+    true,
+    "operator",
+    undefined,
+    true,
+  ],
+  [
+    "reviewer without editor setting",
+    "reviewer",
+    true,
+    undefined,
+    "reviewer",
+    true,
+  ],
+  [
+    "reviewer without reviewer setting",
+    "reviewer",
+    true,
+    "operator",
+    undefined,
+    false,
+  ],
+  [
+    "editor without editor setting",
+    "operator",
+    true,
+    undefined,
+    "reviewer",
+    false,
+  ],
+  ["missing settings", "operator", true, undefined, undefined, false],
+  ["empty settings", "operator", true, "", "", false],
+  [
+    "reviewer setting is one exact id",
+    "reviewer",
+    true,
+    "operator",
+    "reviewer,other",
+    false,
+  ],
+  [
+    "reviewer setting is not an email",
+    "member",
+    true,
+    "operator",
+    "synthetic@example.test",
+    false,
+  ],
+] as const)(
+  "protects the private inbox for %s",
+  async (_label, userId, emailVerified, editorId, reviewerId, allowed) => {
+    await reports.submitReport({ reason: "privacy", detail });
+    for (const [key, value] of [
+      ["EDITOR_USER_ID", editorId],
+      ["REPORT_REVIEWER_USER_ID", reviewerId],
+    ] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    current.user =
+      userId === null ? null : { ...member(userId), emailVerified };
+    expect(await reports.canReviewReports()).toBe(allowed);
+    if (allowed) {
+      const inbox = await reports.loadOperatorReports();
+      expect(inbox).toHaveLength(1);
+      expect(inbox[0]).toMatchObject({ reason: "privacy", detail });
+    } else {
+      await expect(reports.loadOperatorReports()).rejects.toMatchObject({
+        status: 403,
+      });
+    }
+  },
+);
 it("rejects cross-site requests before saving and accepts a same-origin verified member", async () => {
   const request = (origin: string) =>
     new Request("https://forum.example.test/api/reports", {
