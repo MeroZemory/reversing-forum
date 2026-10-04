@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -278,6 +279,76 @@ describe("whole-block candidate transport shards", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    "missing",
+    "hash",
+    "packet",
+    "block",
+    "malformed",
+    "valid",
+    "disabled",
+  ])(
+    "explicit failed-packet recovery rejects %s evidence without another model call",
+    async (kind) => {
+      const { options, calls, resultFor } = fixture();
+      await expect(
+        runCandidateShards({
+          ...options,
+          quarantineInvalidOutput: true,
+          invoke: async (args) => {
+            calls.push(args);
+            if (calls.length === 3) throw new Error("deadline");
+            const result: any = resultFor(read(args[1]));
+            if (calls.length === 2) result.blocks[0].contextIds = [999];
+            write(args[2], result);
+          },
+        }),
+      ).rejects.toThrow("deadline");
+      const directory = join(
+        options.cacheDirectory,
+        readdirSync(options.cacheDirectory)[0],
+      );
+      const name = readdirSync(directory).find((f) =>
+        f.endsWith(".rejected.json"),
+      )!;
+      const path = join(directory, name);
+      if (kind === "missing") rmSync(path);
+      else if (kind === "hash")
+        writeFileSync(path, readFileSync(path, "utf8") + "\n");
+      else if (kind !== "disabled") {
+        const value: any =
+          kind === "valid" ? resultFor(read(calls[1][1])) : read(path);
+        if (kind === "packet") value.packetId = "b".repeat(64);
+        if (kind === "block") value.blocks[0].batchId = "b".repeat(64);
+        const text = kind === "malformed" ? "{" : JSON.stringify(value);
+        writeFileSync(path, text);
+        const parts = name.split(".");
+        parts[1] = createHash("sha256").update(text).digest("hex");
+        renameSync(path, join(directory, parts.join(".")));
+      }
+      const before = readdirSync(directory).map((f) => [
+        f,
+        readFileSync(join(directory, f), "utf8"),
+      ]);
+      calls.length = 0;
+      await expect(
+        runCandidateShards({
+          ...options,
+          quarantineInvalidOutput: kind !== "disabled",
+          quarantineRejectedRetry: true,
+        }),
+      ).rejects.toThrow("candidate-shard-cache-invalid");
+      expect(calls).toHaveLength(0);
+      expect(existsSync(options.output)).toBe(false);
+      expect(
+        readdirSync(directory).map((f) => [
+          f,
+          readFileSync(join(directory, f), "utf8"),
+        ]),
+      ).toEqual(before);
+    },
+  );
 
   it("revalidates cached scope even when the stored output hash matches", async () => {
     const { options, calls } = fixture();

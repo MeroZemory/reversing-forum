@@ -410,6 +410,201 @@ describe("optional candidate shard routing", () => {
     },
   );
 });
+it("isolates an explicitly selected packet after invalid output and retry deadline, then continues without a third call", async () => {
+  const { root, directory, packets } = fixture(2);
+  const source = read(packets[0].file);
+  source.blocks = Array.from({ length: 5 }, (_, n) => ({
+    ...source.blocks[0],
+    batchId: id(n + 10),
+  }));
+  write(packets[0].file, source);
+  const options = {
+    root,
+    phase: "candidate" as const,
+    concurrency: 1,
+    candidateShardBlocks: 2,
+    repairRelevant: true,
+    quarantineInvalidCandidates: true,
+    separateCandidateProgress: true,
+  };
+  const calls: Launch[] = [];
+  const timeoutReceipt = join(
+    directory,
+    "codex-logs/synthetic-deadline.receipt.json",
+  );
+  const interrupted = await runCorpus(options, async (launch) => {
+    calls.push(launch);
+    const { script, args } = command(launch);
+    expect(script).toBe("chat-codex-run.ts");
+    if (calls.length === 3) {
+      write(timeoutReceipt, {
+        stopReason: "deadline",
+        timedOut: true,
+        settled: false,
+        outputAccepted: false,
+        finalAccountConfirmed: true,
+        reservationId: "synthetic-unsettled",
+      });
+      return { code: 1, errorCode: "stopped" };
+    }
+    const child = read(args[1]);
+    const output = {
+      packetId: child.packetId,
+      complete: true,
+      blocks: child.blocks.map((b: any) => ({
+        ...candidateOutput(child.packetId).blocks[0],
+        batchId: b.batchId,
+      })),
+    };
+    if (calls.length === 2) output.blocks[0].contextIds = [999];
+    write(args[2], output);
+    return { code: 0 };
+  });
+  expect(interrupted.code).toBe(1);
+  expect(calls).toHaveLength(3); // One cached success, then two failed attempts.
+  const timeoutBefore = readFileSync(timeoutReceipt, "utf8");
+  const cache = join(directory, "candidate-shards");
+  const shardDirectory = join(cache, readdirSync(cache)[0]);
+  const snapshot = () =>
+    readdirSync(shardDirectory).map((f) => [
+      f,
+      readFileSync(join(shardDirectory, f), "utf8"),
+    ]);
+  const before = snapshot();
+  const recovery = { ...options, quarantineFailedPacket: packets[0].packetId };
+  calls.length = 0;
+  const recovered = await runCorpus(recovery, async (launch) => {
+    calls.push(launch);
+    const { script, args } = command(launch);
+    if (script === "chat-codex-run.ts") {
+      const child = read(args[1]);
+      expect(child.packetId).toBe(packets[1].packetId);
+      write(args[2], candidateOutput(child.packetId));
+      return { code: 0 };
+    }
+    if (args[0] === "context-only") {
+      expect(read(args[1])).toMatchObject({
+        complete: false,
+        blocks: [{ batchId: id(10) }, { batchId: id(11) }],
+      });
+      const receipt = contextOnlyReceipt();
+      receipt.importedBatches = 5;
+      receipt.contextCounts.needsContextMessages = 5;
+      return { code: 0, stdout: JSON.stringify(receipt) };
+    }
+    expect(args[0]).toBe("repair-relevant");
+    expect(read(args[1]).packetId).toBe(packets[1].packetId);
+    return {
+      code: 0,
+      stdout: JSON.stringify({
+        repaired: true,
+        repairCounts: { needsContextMessages: 0, needsContextCandidates: 0 },
+      }),
+    };
+  });
+  expect(recovered.code).toBe(0);
+  expect(recovered.progress.counts).toMatchObject({
+    imported: 6,
+    quarantinedPackets: 1,
+    needsContext: 5,
+  });
+  expect(recovered.progress.failures).toContainEqual({
+    script: "chat-codex-run.ts",
+    exitCode: 1,
+    errorCode: "stopped",
+  });
+  expect(
+    recovered.progress.steps[`import:${packets[0].packetId}`],
+  ).toMatchObject({ quarantined: true, needsContext: 5 });
+  expect(
+    Object.keys(recovered.progress.steps).filter((key) =>
+      key.startsWith("candidate:"),
+    ),
+  ).toHaveLength(1);
+  expect(
+    calls.filter((c) => command(c).script === "chat-codex-run.ts"),
+  ).toHaveLength(1);
+  expect(snapshot()).toEqual(before);
+  expect(readFileSync(timeoutReceipt, "utf8")).toBe(timeoutBefore);
+  calls.length = 0;
+  const repeated = await runCorpus(recovery, async (launch) => {
+    calls.push(launch);
+    return { code: 0 };
+  });
+  expect(repeated.code).toBe(0);
+  expect(calls).toHaveLength(0);
+  expect(snapshot()).toEqual(before);
+  expect(readFileSync(timeoutReceipt, "utf8")).toBe(timeoutBefore);
+});
+
+it("restricts a failed-packet selector to explicit sharded candidate quarantine", async () => {
+  const base = {
+    phase: "candidate" as const,
+    concurrency: 1,
+    candidateShardBlocks: 2,
+    quarantineInvalidCandidates: true,
+    quarantineFailedPacket: id(1),
+  };
+  for (const options of [
+    { ...base, phase: "draft" as const },
+    { ...base, candidateShardBlocks: undefined },
+    { ...base, quarantineInvalidCandidates: false },
+    { ...base, quarantineFailedPacket: "not-a-packet" },
+  ]) {
+    const runner = vi.fn();
+    await expect(runCorpus(options, runner)).rejects.toThrow(
+      "invalid-argument",
+    );
+    expect(runner).not.toHaveBeenCalled();
+  }
+  expect(
+    parseOptions(["candidate", "--quarantine-failed-packet", id(1)])
+      .quarantineFailedPacket,
+  ).toBe(id(1));
+  expect(() =>
+    parseOptions(["candidate", "--quarantine-failed-packet"]),
+  ).toThrow("invalid-argument");
+  const { root } = fixture(1);
+  const runner = vi.fn();
+  const unknown = await runCorpus(
+    { ...base, root, quarantineFailedPacket: id(2) },
+    runner,
+  );
+  expect(unknown.code).toBe(1);
+  expect(unknown.progress.failures?.at(-1)?.errorCode).toBe(
+    "invalid-packet-path",
+  );
+  expect(runner).not.toHaveBeenCalled();
+});
+
+it.each([true, false])(
+  "rejects mismatched input identity before any model call for selected=%s",
+  async (selected) => {
+    const { root, packets } = fixture(2);
+    const source = read(packets[0].file);
+    source.packetId = packets[1].packetId;
+    write(packets[0].file, source);
+    const runner = vi.fn();
+    const result = await runCorpus(
+      {
+        root,
+        phase: "candidate",
+        concurrency: 1,
+        candidateShardBlocks: 2,
+        quarantineInvalidCandidates: true,
+        quarantineFailedPacket: packets[selected ? 0 : 1].packetId,
+      },
+      runner,
+    );
+    expect(result.code).toBe(1);
+    expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+      "candidate-shard-input-invalid",
+    );
+    expect(runner).not.toHaveBeenCalled();
+    expect(Object.keys(result.progress.steps)).toHaveLength(0);
+  },
+);
+
 function candidateRunner(calls: Launch[]): Runner {
   return async (launch) => {
     calls.push(launch);

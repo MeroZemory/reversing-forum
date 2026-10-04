@@ -33,6 +33,7 @@ export type Options = {
   repairRelevant?: boolean;
   separateCandidateProgress?: boolean;
   quarantineInvalidCandidates?: boolean;
+  quarantineFailedPacket?: string;
   root?: string;
 };
 type Receipt = {
@@ -254,7 +255,12 @@ export function parseOptions(args: string[]): Options {
     else if (args[i] === "--repair-relevant") options.repairRelevant = true;
     else if (args[i] === "--quarantine-invalid-candidates")
       options.quarantineInvalidCandidates = true;
-    else if (
+    else if (args[i] === "--quarantine-failed-packet") {
+      const packetId = args[++i];
+      if (!/^[a-f0-9]{64}$/.test(packetId ?? ""))
+        throw new Error("invalid-argument");
+      options.quarantineFailedPacket = packetId;
+    } else if (
       args[i] === "--separate-candidate-progress" &&
       phase === "candidate"
     )
@@ -351,6 +357,14 @@ export async function runCorpus(
   options: Options,
   runner: Runner = nodeRunner,
 ): Promise<{ code: number; progress: Progress }> {
+  if (
+    options.quarantineFailedPacket !== undefined &&
+    (!/^[a-f0-9]{64}$/.test(options.quarantineFailedPacket) ||
+      options.phase !== "candidate" ||
+      options.quarantineInvalidCandidates !== true ||
+      options.candidateShardBlocks === undefined)
+  )
+    throw new Error("invalid-argument");
   if (
     options.candidateShardBlocks !== undefined &&
     (!Number.isSafeInteger(options.candidateShardBlocks) ||
@@ -629,8 +643,11 @@ export async function runCorpus(
     output: string,
     allowCandidateSubset = false,
     quarantineInvalidOutput = false,
+    manifestPacketId?: string,
   ) => {
     const source = read(input);
+    if (mode === "candidate" && source.packetId !== manifestPacketId)
+      throw new Error("candidate-shard-input-invalid");
     const schemaMode =
       mode === "draft" && source.draftSchema === "draft-purpose"
         ? "draft-purpose"
@@ -657,6 +674,9 @@ export async function runCorpus(
           schema,
           blocksPerShard: options.candidateShardBlocks,
           quarantineInvalidOutput,
+          quarantineRejectedRetry:
+            quarantineInvalidOutput &&
+            manifestPacketId === options.quarantineFailedPacket,
           cacheDirectory: join(directory, "candidate-shards"),
           invoke: (args) => invoke("chat-codex-run.ts", args),
           validate: (value, template) => validate(value, template),
@@ -727,6 +747,13 @@ export async function runCorpus(
   };
   try {
     if (options.phase === "candidate" || options.phase === "all") {
+      if (
+        options.quarantineFailedPacket &&
+        !packets(join(directory, "triage/relevant/manifest.json")).some(
+          (packet) => packet.packetId === options.quarantineFailedPacket,
+        )
+      )
+        throw new Error("invalid-packet-path");
       await pool(
         packets(join(directory, "triage/relevant/manifest.json")),
         async (packet) => {
@@ -770,7 +797,14 @@ export async function runCorpus(
           let helperAttempted = false;
           try {
             // Candidate generation may run once; the repair/import helper never calls models.
-            await model("candidate", input, output, repair, quarantine);
+            await model(
+              "candidate",
+              input,
+              output,
+              repair,
+              quarantine,
+              packet.packetId,
+            );
             const hash = digest([
               read(input),
               read(output),

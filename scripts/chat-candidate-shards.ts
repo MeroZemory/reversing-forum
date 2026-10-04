@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -30,10 +31,16 @@ export async function runCandidateShards(options: {
   cacheDirectory: string;
   blocksPerShard: number;
   quarantineInvalidOutput?: boolean;
+  quarantineRejectedRetry?: boolean;
   invoke: (args: string[]) => Promise<unknown>;
   validate: (value: Json, schema: Json) => void;
 }): Promise<void> {
   const { input, output, schema, blocksPerShard, invoke, validate } = options;
+  if (
+    options.quarantineRejectedRetry === true &&
+    options.quarantineInvalidOutput !== true
+  )
+    throw new Error("candidate-shard-cache-invalid");
   if (
     !Number.isSafeInteger(blocksPerShard) ||
     blocksPerShard < 1 ||
@@ -219,6 +226,47 @@ export async function runCandidateShards(options: {
           throw new Error("candidate-shard-cache-invalid");
       };
       checkInputs();
+      // Explicit recovery of an already failed packet never invokes its model
+      // again. Hash-check the preserved invalid bytes before context-only import.
+      if (options.quarantineRejectedRetry === true) {
+        const rejected = readdirSync(directory).filter(
+          (name) =>
+            name.startsWith(`${childHash}.`) && name.endsWith(".rejected.json"),
+        );
+        if (!rejected.length) throw new Error("candidate-shard-cache-invalid");
+        for (const name of rejected) {
+          const text = read(join(directory, name));
+          if (!name.startsWith(`${childHash}.${hash(text)}.`))
+            throw new Error("candidate-shard-cache-invalid");
+          let rejectedResult: Json;
+          try {
+            rejectedResult = JSON.parse(text);
+          } catch {
+            throw new Error("candidate-shard-cache-invalid");
+          }
+          if (
+            rejectedResult?.packetId !== source.packetId ||
+            !Array.isArray(rejectedResult.blocks) ||
+            rejectedResult.blocks.length !== child.blocks.length ||
+            new Set(rejectedResult.blocks.map((b: Json) => b?.batchId)).size !==
+              child.blocks.length ||
+            rejectedResult.blocks.some(
+              (b: Json) =>
+                !child.blocks.some((s: Json) => s.batchId === b?.batchId),
+            )
+          )
+            throw new Error("candidate-shard-cache-invalid");
+          let invalid = false;
+          try {
+            check(rejectedResult, child);
+          } catch {
+            invalid = true;
+          }
+          if (!invalid) throw new Error("candidate-shard-cache-invalid");
+        }
+        writeCombined(false);
+        throw new Error("candidate-shard-output-invalid");
+      }
       // An interrupted or failed transport is never a reusable result.
       preserveAttempt();
       for (let call = 0; call < 2; call++) {
