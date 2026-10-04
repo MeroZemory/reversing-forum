@@ -74,7 +74,7 @@ export function collectReviewed(pairs: BundlePair[]): Candidate[] {
       b.qualityPolicyVersion !== qualityPolicyVersion ||
       r.qualityPolicyVersion !== qualityPolicyVersion ||
       r.model !== "gpt-6.1-sol" ||
-      r.effort !== "xhigh"
+      (r.effort !== "xhigh" && r.effort !== "max")
     )
       throw new Error("invalid-reviewed-bundle");
     const reviews = new Map<string, Record<string, unknown>>();

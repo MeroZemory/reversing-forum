@@ -245,38 +245,59 @@ function rehashPrepared(p: Prepared) {
 
 describe("independent bulk preflight", () => {
   afterEach(() => vi.restoreAllMocks());
-  it("collects only final snapshots tied to exact independent review, never raw evidence", () => {
-    const p = pair();
-    Object.assign(p.bundle.entries[0], {
-      sourceAliases: ["private-alias"],
-      evidenceIds: ["private-evidence"],
-      original: "RAW CHAT",
-    });
-    const selected = collectReviewed([p]);
-    expect(JSON.stringify(selected)).not.toMatch(
-      /private-alias|private-evidence|RAW CHAT/,
-    );
-    p.bundle.entries[0].publicData.body += "changed";
-    expect(() => collectReviewed([p])).toThrow("unapproved-public-snapshot");
-    expect(() => collectReviewed([pair(), pair()])).toThrow(
-      "duplicate-candidate-key",
-    );
-    const rejected = pair();
-    rejected.review.entries[0].privacy = false;
-    expect(() => collectReviewed([rejected])).toThrow();
-    const duplicate = pair();
-    duplicate.review.entries.push(duplicate.review.entries[0]);
-    expect(() => collectReviewed([duplicate])).toThrow("duplicate-review-key");
-  });
+  it.each(["xhigh", "max"])(
+    "collects only final snapshots tied to exact independent %s review, never raw evidence",
+    (effort) => {
+      const p = pair();
+      p.review.effort = effort;
+      Object.assign(p.bundle.entries[0], {
+        sourceAliases: ["private-alias"],
+        evidenceIds: ["private-evidence"],
+        original: "RAW CHAT",
+      });
+      const selected = collectReviewed([p]);
+      expect(selected).toHaveLength(1);
+      expect(selected[0].publicHash).toBe(
+        digest(p.bundle.entries[0].publicData),
+      );
+      expect(selected[0].reviewHash).toBe(digest(p.review));
+      expect(JSON.stringify(selected)).not.toMatch(
+        /private-alias|private-evidence|RAW CHAT/,
+      );
+      p.bundle.entries[0].publicData.body += "changed";
+      expect(() => collectReviewed([p])).toThrow("unapproved-public-snapshot");
+      expect(() => collectReviewed([pair(), pair()])).toThrow(
+        "duplicate-candidate-key",
+      );
+      const rejected = pair();
+      rejected.review.effort = effort;
+      rejected.review.entries[0].privacy = false;
+      expect(() => collectReviewed([rejected])).toThrow();
+      const duplicate = pair();
+      duplicate.review.effort = effort;
+      duplicate.review.entries.push(duplicate.review.entries[0]);
+      expect(() => collectReviewed([duplicate])).toThrow(
+        "duplicate-review-key",
+      );
+    },
+  );
   it.each([
     { policy: "reusable-technical-knowledge-v3" },
     { policy: undefined },
     { model: "gpt-6-luna" },
     { model: undefined },
-    { effort: "max" },
+    { effort: "none" },
+    { effort: "minimal" },
+    { effort: "low" },
+    { effort: "medium" },
+    { effort: "high" },
+    { effort: "MAX" },
+    { effort: "max " },
+    { effort: "" },
+    { effort: null },
     { effort: undefined },
   ])(
-    "rejects outdated/missing policy and non-Sol/xhigh reviews: %j",
+    "rejects outdated/missing policy and non-Sol/xhigh|max reviews: %j",
     (change) => {
       const p = pair();
       if ("policy" in change) {
@@ -292,12 +313,53 @@ describe("independent bulk preflight", () => {
       expect(() => collectReviewed([p])).toThrow("invalid-reviewed-bundle");
     },
   );
-  it("rejects an outdated entry policy even with a current Sol/xhigh review envelope", () => {
+  it.each(["xhigh", "max"])(
+    "rejects an outdated entry policy even with a current Sol/%s review envelope",
+    (effort) => {
+      const p = pair();
+      p.review.effort = effort;
+      p.review.entries[0].qualityPolicyVersion =
+        "reusable-technical-knowledge-v3";
+      expect(() => collectReviewed([p])).toThrow("unapproved-public-snapshot");
+    },
+  );
+  it.each(
+    ["xhigh", "max"].flatMap((effort) =>
+      [
+        "passed",
+        "quality",
+        "meaning",
+        "privacy",
+        "rights",
+        "externalTransfer",
+      ].flatMap((check) =>
+        [false, undefined, "true"].map((value) => ({ effort, check, value })),
+      ),
+    ),
+  )("rejects incomplete review checks: %j", ({ effort, check, value }) => {
     const p = pair();
-    p.review.entries[0].qualityPolicyVersion =
-      "reusable-technical-knowledge-v3";
+    p.review.effort = effort;
+    Object.assign(p.review.entries[0], { [check]: value });
     expect(() => collectReviewed([p])).toThrow("unapproved-public-snapshot");
   });
+  it.each(["xhigh", "max"])(
+    "rejects a broken exact public hash for Sol/%s",
+    (effort) => {
+      const p = pair();
+      p.review.effort = effort;
+      p.review.entries[0].publicHash = "invalid-hash";
+      expect(() => collectReviewed([p])).toThrow("unapproved-public-snapshot");
+    },
+  );
+  it.each(["xhigh", "max"])(
+    "rejects another model even at %s effort",
+    (effort) => {
+      const p = pair();
+      p.review.effort = effort;
+      p.review.model = "gpt-6-luna";
+      expect(() => collectReviewed([p])).toThrow("invalid-reviewed-bundle");
+    },
+  );
   it("calculates many documents across batch boundaries once and reuses their vectors at resolve", async () => {
     const c = [candidate("new", "THREAD new condition ".repeat(100))];
     const posts = Array.from({ length: 40 }, (_, i) =>
