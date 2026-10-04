@@ -34,7 +34,9 @@ $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $command = New-ProductionStartupCommand -PowerShellPath $powershell -LauncherPath $launcher -NodePath $node
 if ($PSCmdlet.ShouldProcess($key + '\' + $entryName, 'Register hidden production startup after current-user logon')) {
-    New-Item -Path $key -Force | Out-Null
+    if (!(Test-Path -LiteralPath $key)) {
+        New-Item -Path $key | Out-Null
+    }
     New-ItemProperty -LiteralPath $key -Name $entryName -Value $command -PropertyType String -Force | Out-Null
     $registered = Get-ItemPropertyValue -LiteralPath $key -Name $entryName
     if ($registered -cne $command) { throw 'Startup registration verification failed.' }
