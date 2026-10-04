@@ -12,9 +12,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { startCodexReceipt } from "../../scripts/chat-codex-receipt";
 import { runCandidateShards } from "../../scripts/chat-candidate-shards";
 import { validate } from "../../scripts/chat-corpus-run";
 
+const callId = (n: number) =>
+  `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const roots: string[] = [];
 afterEach(() =>
   roots
@@ -68,6 +71,7 @@ function fixture() {
     output,
     schema,
     cacheDirectory,
+    receiptDirectory: join(root, "codex-logs"),
     blocksPerShard: 2,
     invoke,
     validate,
@@ -76,6 +80,315 @@ function fixture() {
 }
 
 describe("whole-block candidate transport shards", () => {
+  it.each([false, true])(
+    "preserves two deadlines without semantic quarantine or a third call (partial=%s)",
+    async (partial) => {
+      const { options, calls, resultFor } = fixture();
+      const invoke = async (args: string[]) => {
+        calls.push(args);
+        mkdirSync(options.receiptDirectory, { recursive: true });
+        const reservationId = callId(calls.length);
+        write(join(options.receiptDirectory, `${reservationId}.receipt.json`), {
+          reservationId,
+          inputHash: createHash("sha256")
+            .update(readFileSync(args[1], "utf8"))
+            .digest("hex"),
+          exitCode: 1,
+          stopReason: "deadline",
+          settled: false,
+          outputAccepted: false,
+        });
+        if (partial) {
+          const result: any = resultFor(read(args[1]));
+          result.blocks[0].contextIds = [999];
+          write(args[2], result);
+        }
+        throw new Error("deadline");
+      };
+      for (let attempt = 0; attempt < 2; attempt++)
+        await expect(
+          runCandidateShards({ ...options, invoke }),
+        ).rejects.toThrow("deadline");
+      const before = readdirSync(options.receiptDirectory).map((name) => [
+        name,
+        readFileSync(join(options.receiptDirectory, name), "utf8"),
+      ]);
+      calls.length = 0;
+      await expect(
+        runCandidateShards({
+          ...options,
+          invoke,
+          quarantineInvalidOutput: true,
+          quarantineRejectedRetry: true,
+        }),
+      ).rejects.toThrow("candidate-shard-attempt-limit");
+      expect(calls).toHaveLength(0);
+      expect(existsSync(options.output)).toBe(false);
+      expect(
+        readdirSync(options.receiptDirectory).map((name) => [
+          name,
+          readFileSync(join(options.receiptDirectory, name), "utf8"),
+        ]),
+      ).toEqual(before);
+      const directory = join(
+        options.cacheDirectory,
+        readdirSync(options.cacheDirectory)[0],
+      );
+      expect(
+        readdirSync(directory).some((name) =>
+          /\.(output|receipt)\.json$/.test(name),
+        ),
+      ).toBe(false);
+      expect(
+        readdirSync(directory).filter((name) =>
+          name.endsWith(".rejected.json"),
+        ),
+      ).toHaveLength(partial ? 2 : 0);
+    },
+  );
+
+  it("counts a returned out-of-scope result after a deadline and quarantines without a third call", async () => {
+    const { options, calls, resultFor } = fixture();
+    const invoke = async (args: string[]) => {
+      calls.push(args);
+      mkdirSync(options.receiptDirectory, { recursive: true });
+      const reservationId = callId(calls.length);
+      write(join(options.receiptDirectory, `${reservationId}.receipt.json`), {
+        reservationId,
+        inputHash: createHash("sha256")
+          .update(readFileSync(args[1], "utf8"))
+          .digest("hex"),
+        exitCode: calls.length === 1 ? 1 : 0,
+        settled: calls.length !== 1,
+        outputAccepted: calls.length !== 1,
+        finalAccountConfirmed: true,
+        stopped: calls.length === 1,
+      });
+      if (calls.length === 1) throw new Error("deadline");
+      const result: any = resultFor(read(args[1]));
+      result.blocks[0].contextIds.push(999);
+      write(args[2], result);
+    };
+    const guarded = { ...options, invoke, quarantineInvalidOutput: true };
+    await expect(runCandidateShards(guarded)).rejects.toThrow("deadline");
+    const deadline = readFileSync(
+      join(options.receiptDirectory, `${callId(1)}.receipt.json`),
+      "utf8",
+    );
+    await expect(runCandidateShards(guarded)).rejects.toThrow(
+      "candidate-shard-output-invalid",
+    );
+    expect(calls).toHaveLength(2);
+    expect(read(options.output)).toEqual({
+      packetId: "a".repeat(64),
+      complete: false,
+      blocks: [],
+    });
+    expect(
+      readFileSync(
+        join(options.receiptDirectory, `${callId(1)}.receipt.json`),
+        "utf8",
+      ),
+    ).toBe(deadline);
+    rmSync(options.output);
+    calls.length = 0;
+    await expect(runCandidateShards(guarded)).rejects.toThrow(
+      "candidate-shard-output-invalid",
+    );
+    expect(calls).toHaveLength(0);
+    const directory = join(
+      options.cacheDirectory,
+      readdirSync(options.cacheDirectory)[0],
+    );
+    expect(
+      readdirSync(directory).some((name) =>
+        /\.(output|receipt)\.json$/.test(name),
+      ),
+    ).toBe(false);
+    expect(readdirSync(options.receiptDirectory)).toHaveLength(2);
+  });
+
+  it("reuses a valid child cache before consulting exhausted receipt history", async () => {
+    const { options, calls, source, resultFor } = fixture();
+    source.blocks = source.blocks.slice(0, 1);
+    write(options.input, source);
+    const invoke = async (args: string[]) => {
+      calls.push(args);
+      mkdirSync(options.receiptDirectory, { recursive: true });
+      const reservationId = callId(calls.length);
+      write(join(options.receiptDirectory, `${reservationId}.receipt.json`), {
+        reservationId,
+        inputHash: createHash("sha256")
+          .update(readFileSync(args[1], "utf8"))
+          .digest("hex"),
+        exitCode: 0,
+        settled: true,
+        outputAccepted: true,
+      });
+      const result: any = resultFor(read(args[1]));
+      if (calls.length === 1) result.blocks[0].contextIds.push(999);
+      write(args[2], result);
+    };
+    await runCandidateShards({ ...options, invoke });
+    expect(calls).toHaveLength(2);
+    rmSync(options.output);
+    calls.length = 0;
+    await runCandidateShards({ ...options, invoke });
+    expect(calls).toHaveLength(0);
+    expect(read(options.output).complete).toBe(true);
+    expect(readdirSync(options.receiptDirectory)).toHaveLength(2);
+  });
+
+  it.each(["malformed", "identity", "array-hash", "array-id"])(
+    "fails closed on %s receipt history without a model call",
+    async (kind) => {
+      const { options, calls } = fixture();
+      mkdirSync(options.receiptDirectory);
+      writeFileSync(
+        join(options.receiptDirectory, `${callId(1)}.receipt.json`),
+        kind === "malformed"
+          ? "{"
+          : JSON.stringify({
+              inputHash:
+                kind === "array-hash" ? ["a".repeat(64)] : "a".repeat(64),
+              reservationId:
+                kind === "array-id"
+                  ? [callId(1)]
+                  : kind === "identity"
+                    ? callId(2)
+                    : callId(1),
+            }),
+      );
+      await expect(runCandidateShards(options)).rejects.toThrow(
+        "candidate-shard-history-invalid",
+      );
+      expect(calls).toHaveLength(0);
+      expect(existsSync(options.output)).toBe(false);
+    },
+  );
+
+  it("excludes and preserves non-call seeds before JSON parsing", async () => {
+    const { options, calls } = fixture();
+    mkdirSync(options.receiptDirectory);
+    const seed = join(options.receiptDirectory, "seed.receipt.json");
+    const nonV4 = join(
+      options.receiptDirectory,
+      "00000000-0000-1000-8000-000000000001.receipt.json",
+    );
+    writeFileSync(seed, "{");
+    writeFileSync(nonV4, "{");
+    await runCandidateShards(options);
+    expect(calls).toHaveLength(3);
+    expect(readFileSync(seed, "utf8")).toBe("{");
+    expect(readFileSync(nonV4, "utf8")).toBe("{");
+  });
+
+  it("counts two interrupted pending receipts and never invokes again", async () => {
+    const { options, calls } = fixture();
+    await expect(
+      runCandidateShards({
+        ...options,
+        invoke: async (args) => {
+          mkdirSync(options.receiptDirectory, { recursive: true });
+          const inputHash = createHash("sha256")
+            .update(readFileSync(args[1], "utf8"))
+            .digest("hex");
+          for (let n = 1; n <= 2; n++)
+            startCodexReceipt(
+              join(options.receiptDirectory, `${callId(n)}.receipt.json`),
+              {
+                reservationId: callId(n),
+                inputHash,
+              },
+            );
+          throw new Error("interrupted");
+        },
+      }),
+    ).rejects.toThrow("interrupted");
+    const before = readdirSync(options.receiptDirectory).map((name) =>
+      readFileSync(join(options.receiptDirectory, name), "utf8"),
+    );
+    for (const selected of [false, true]) {
+      await expect(
+        runCandidateShards({
+          ...options,
+          quarantineInvalidOutput: true,
+          quarantineRejectedRetry: selected,
+        }),
+      ).rejects.toThrow("candidate-shard-attempt-limit");
+    }
+    expect(calls).toHaveLength(0);
+    expect(existsSync(options.output)).toBe(false);
+    expect(
+      readdirSync(options.receiptDirectory).map((name) =>
+        readFileSync(join(options.receiptDirectory, name), "utf8"),
+      ),
+    ).toEqual(before);
+  });
+
+  it("fails closed when an array hash would hide one of two actual calls", async () => {
+    const { options, calls } = fixture();
+    await expect(
+      runCandidateShards({
+        ...options,
+        invoke: async (args) => {
+          mkdirSync(options.receiptDirectory, { recursive: true });
+          const inputHash = createHash("sha256")
+            .update(readFileSync(args[1], "utf8"))
+            .digest("hex");
+          for (let n = 1; n <= 2; n++)
+            write(join(options.receiptDirectory, `${callId(n)}.receipt.json`), {
+              reservationId: callId(n),
+              inputHash: n === 1 ? inputHash : [inputHash],
+              exitCode: 1,
+              outputAccepted: false,
+              settled: false,
+            });
+          throw new Error("deadline");
+        },
+      }),
+    ).rejects.toThrow("deadline");
+    await expect(runCandidateShards(options)).rejects.toThrow(
+      "candidate-shard-history-invalid",
+    );
+    expect(calls).toHaveLength(0);
+    expect(existsSync(options.output)).toBe(false);
+  });
+
+  it("refuses local malformed artifacts even with two returned native proofs", async () => {
+    const { options, calls } = fixture();
+    await expect(
+      runCandidateShards({
+        ...options,
+        quarantineInvalidOutput: true,
+        invoke: async (args) => {
+          calls.push(args);
+          mkdirSync(options.receiptDirectory, { recursive: true });
+          write(
+            join(
+              options.receiptDirectory,
+              `${callId(calls.length)}.receipt.json`,
+            ),
+            {
+              reservationId: callId(calls.length),
+              inputHash: createHash("sha256")
+                .update(readFileSync(args[1], "utf8"))
+                .digest("hex"),
+              exitCode: 0,
+              outputAccepted: true,
+              settled: true,
+              finalAccountConfirmed: true,
+              stopped: false,
+            },
+          );
+          writeFileSync(args[2], "{");
+        },
+      }),
+    ).rejects.toThrow("candidate-shard-cache-invalid");
+    expect(calls).toHaveLength(2);
+    expect(existsSync(options.output)).toBe(false);
+  });
+
   it("preserves native string instructions and resumes an existing v1 shard receipt", async () => {
     const { options, source, calls, resultFor } = fixture();
     const nativeSource = {
@@ -298,6 +611,26 @@ describe("whole-block candidate transport shards", () => {
           quarantineInvalidOutput: true,
           invoke: async (args) => {
             calls.push(args);
+            if (calls.length >= 2) {
+              mkdirSync(options.receiptDirectory, { recursive: true });
+              write(
+                join(
+                  options.receiptDirectory,
+                  `${callId(calls.length)}.receipt.json`,
+                ),
+                {
+                  reservationId: callId(calls.length),
+                  inputHash: createHash("sha256")
+                    .update(readFileSync(args[1], "utf8"))
+                    .digest("hex"),
+                  exitCode: calls.length === 2 ? 0 : 1,
+                  settled: calls.length === 2,
+                  outputAccepted: calls.length === 2,
+                  finalAccountConfirmed: true,
+                  stopped: calls.length !== 2,
+                },
+              );
+            }
             if (calls.length === 3) throw new Error("deadline");
             const result: any = resultFor(read(args[1]));
             if (calls.length === 2) result.blocks[0].contextIds = [999];

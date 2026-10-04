@@ -29,6 +29,7 @@ export async function runCandidateShards(options: {
   output: string;
   schema: string;
   cacheDirectory: string;
+  receiptDirectory: string;
   blocksPerShard: number;
   quarantineInvalidOutput?: boolean;
   quarantineRejectedRetry?: boolean;
@@ -228,7 +229,11 @@ export async function runCandidateShards(options: {
       checkInputs();
       // Explicit recovery of an already failed packet never invokes its model
       // again. Hash-check the preserved invalid bytes before context-only import.
-      if (options.quarantineRejectedRetry === true) {
+      const quarantineRejected = () => {
+        checkInputs();
+        const history = historicalCalls();
+        if (history.count < 2 || !history.returned)
+          throw new Error("candidate-shard-attempt-limit");
         const rejected = readdirSync(directory).filter(
           (name) =>
             name.startsWith(`${childHash}.`) && name.endsWith(".rejected.json"),
@@ -266,14 +271,71 @@ export async function runCandidateShards(options: {
         }
         writeCombined(false);
         throw new Error("candidate-shard-output-invalid");
-      }
+      };
+      const transportHash = hash(transportText);
+      const historicalCalls = () => {
+        let count = 0,
+          returned = false;
+        if (!existsSync(options.receiptDirectory)) return { count, returned };
+        for (const name of readdirSync(options.receiptDirectory)) {
+          // Seed and non-call artifacts are preserved without reading their JSON.
+          if (
+            !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.receipt\.json$/.test(
+              name,
+            )
+          )
+            continue;
+          let metadata: Json;
+          try {
+            metadata = JSON.parse(read(join(options.receiptDirectory, name)));
+            if (
+              !metadata ||
+              Array.isArray(metadata) ||
+              typeof metadata.inputHash !== "string" ||
+              !/^[a-f0-9]{64}$/.test(metadata.inputHash) ||
+              typeof metadata.reservationId !== "string" ||
+              `${metadata.reservationId}.receipt.json` !== name
+            )
+              throw new Error();
+          } catch {
+            throw new Error("candidate-shard-history-invalid");
+          }
+          // Failed and unsettled transports consumed a call too.
+          if (metadata.inputHash === transportHash) {
+            count++;
+            returned ||=
+              metadata.exitCode === 0 &&
+              metadata.outputAccepted === true &&
+              metadata.settled === true &&
+              metadata.finalAccountConfirmed === true &&
+              metadata.stopped === false;
+          }
+        }
+        return { count, returned };
+      };
+      const previousCalls = historicalCalls().count;
       // An interrupted or failed transport is never a reusable result.
       preserveAttempt();
+      if (options.quarantineRejectedRetry === true) quarantineRejected();
       for (let call = 0; call < 2; call++) {
         try {
           // Each call uses the original runner, including its budget charging.
           // Invocation/account/transport errors are outside the retry catch.
           checkInputs();
+          const history = historicalCalls();
+          if (Math.max(previousCalls + call, history.count) >= 2) {
+            if (
+              options.quarantineInvalidOutput === true &&
+              history.returned &&
+              readdirSync(directory).some(
+                (name) =>
+                  name.startsWith(`${childHash}.`) &&
+                  name.endsWith(".rejected.json"),
+              )
+            )
+              quarantineRejected();
+            throw new Error("candidate-shard-attempt-limit");
+          }
           await invoke(["candidate", transportInput, attempt, schema]);
           checkInputs();
           let text: string;
@@ -285,8 +347,13 @@ export async function runCandidateShards(options: {
             if (call === 0) continue;
             // Rejected bytes stay separate. This prefix is only a quarantine
             // envelope, never an accepted model result or reusable child receipt.
-            if (options.quarantineInvalidOutput === true && existsSync(attempt))
-              writeCombined(false);
+            if (
+              options.quarantineInvalidOutput === true &&
+              existsSync(attempt)
+            ) {
+              preserveAttempt();
+              quarantineRejected();
+            }
             throw new Error("candidate-shard-output-invalid");
           }
           privateWrite(childOutput, text);

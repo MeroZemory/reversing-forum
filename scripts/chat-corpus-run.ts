@@ -77,6 +77,8 @@ const failureCodes = new Set([
   "candidate-shard-cache-invalid",
   "candidate-shard-output-invalid",
   "candidate-shard-source-changed",
+  "candidate-shard-attempt-limit",
+  "candidate-shard-history-invalid",
   "runner-failed",
   "runner-aborted",
   "codex-process-tree-stop-failed",
@@ -678,6 +680,7 @@ export async function runCorpus(
             quarantineInvalidOutput &&
             manifestPacketId === options.quarantineFailedPacket,
           cacheDirectory: join(directory, "candidate-shards"),
+          receiptDirectory: join(directory, "codex-logs"),
           invoke: (args) => invoke("chat-codex-run.ts", args),
           validate: (value, template) => validate(value, template),
         });

@@ -17,6 +17,8 @@ import {
 } from "@/server/chat-pipeline/staged-codex-output";
 import { accountAvailable } from "@/server/chat-pipeline/model-budget";
 
+import { finishCodexReceipt } from "../../scripts/chat-codex-receipt";
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -170,6 +172,8 @@ describe("CLI final lookup, settlement, output and receipt lifecycle", () => {
       })()`,
       {
         ...f,
+        receiptPath: join(f.logs, "synthetic-reservation.receipt.json"),
+        finishCodexReceipt,
         Buffer,
         process: processState,
         onSignal: () => {},

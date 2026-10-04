@@ -1,3 +1,4 @@
+import { startCodexReceipt, finishCodexReceipt } from "./chat-codex-receipt";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -242,6 +243,25 @@ try {
       );
       process.exitCode = 2;
     } else {
+      const receiptPath = join(
+        directory,
+        "codex-logs",
+        `${reservationId}.receipt.json`,
+      );
+      startCodexReceipt(receiptPath, {
+        reservationId,
+        parentThreadId,
+        model,
+        effort,
+        inputHash: hash,
+        actualPromptHash,
+        actualSchemaHash,
+        actualSchemaBytes: Buffer.byteLength(actualSchemaText),
+        modelCatalogHash: catalog.hash,
+        modelCatalogBytes: catalog.inputBytes,
+        reservedProxyUsd,
+        basis: PROXY_BASIS,
+      });
       // Confirmed against the installed CLI's features list. Disable tool sources,
       // including plugin/app injection, independently of the prompt.
       const disabled = [
@@ -459,10 +479,7 @@ try {
         finalAccountConfirmed,
       });
       const completedReceipt = { ...receipt, ...output };
-      writeFileSync(
-        join(directory, "codex-logs", `${reservationId}.receipt.json`),
-        JSON.stringify(completedReceipt, null, 2),
-      );
+      finishCodexReceipt(receiptPath, completedReceipt);
       console.log(
         JSON.stringify({
           ...completedReceipt,

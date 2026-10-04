@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { stopCodexProcess } from "../../src/server/chat-pipeline/relative-context";
@@ -329,6 +330,21 @@ describe("optional candidate shard routing", () => {
           ) {
             output.blocks[0].noncandidateRanges = [[0, 999]];
             const text = failure === "malformed" ? "{" : JSON.stringify(output);
+            const reservationId = `00000000-0000-4000-8000-${String(calls.length).padStart(12, "0")}`;
+            write(
+              join(directory, "codex-logs", `${reservationId}.receipt.json`),
+              {
+                reservationId,
+                inputHash: createHash("sha256")
+                  .update(readFileSync(args[1], "utf8"))
+                  .digest("hex"),
+                exitCode: 0,
+                outputAccepted: true,
+                settled: true,
+                finalAccountConfirmed: true,
+                stopped: false,
+              },
+            );
             rejected.push(text);
             writeFileSync(args[2], text);
           } else write(args[2], output);
@@ -359,6 +375,21 @@ describe("optional candidate shard routing", () => {
         }
         return { code: 0 };
       });
+      if (failure === "malformed") {
+        expect(result.code).toBe(1);
+        expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+          "candidate-shard-cache-invalid",
+        );
+        expect(
+          calls.filter((c) => command(c).args[0] === "context-only"),
+        ).toHaveLength(0);
+        expect(
+          Object.values(result.progress.steps).some(
+            (step: any) => step.quarantined,
+          ),
+        ).toBe(false);
+        return;
+      }
       expect(result.code).toBe(0);
       expect(result.progress.counts).toMatchObject({
         imported: 6,
@@ -410,7 +441,7 @@ describe("optional candidate shard routing", () => {
     },
   );
 });
-it("isolates an explicitly selected packet after invalid output and retry deadline, then continues without a third call", async () => {
+it.each([false, true])("invalid/deadline recovery (%s)", async (selected) => {
   const { root, directory, packets } = fixture(2);
   const source = read(packets[0].file);
   source.blocks = Array.from({ length: 5 }, (_, n) => ({
@@ -430,7 +461,7 @@ it("isolates an explicitly selected packet after invalid output and retry deadli
   const calls: Launch[] = [];
   const timeoutReceipt = join(
     directory,
-    "codex-logs/synthetic-deadline.receipt.json",
+    "codex-logs/00000000-0000-4000-8000-000000000003.receipt.json",
   );
   const interrupted = await runCorpus(options, async (launch) => {
     calls.push(launch);
@@ -438,12 +469,15 @@ it("isolates an explicitly selected packet after invalid output and retry deadli
     expect(script).toBe("chat-codex-run.ts");
     if (calls.length === 3) {
       write(timeoutReceipt, {
+        inputHash: createHash("sha256")
+          .update(readFileSync(args[1], "utf8"))
+          .digest("hex"),
         stopReason: "deadline",
         timedOut: true,
         settled: false,
         outputAccepted: false,
         finalAccountConfirmed: true,
-        reservationId: "synthetic-unsettled",
+        reservationId: "00000000-0000-4000-8000-000000000003",
       });
       return { code: 1, errorCode: "stopped" };
     }
@@ -458,6 +492,24 @@ it("isolates an explicitly selected packet after invalid output and retry deadli
     };
     if (calls.length === 2) output.blocks[0].contextIds = [999];
     write(args[2], output);
+    if (calls.length === 2)
+      write(
+        join(
+          directory,
+          "codex-logs/00000000-0000-4000-8000-000000000002.receipt.json",
+        ),
+        {
+          reservationId: "00000000-0000-4000-8000-000000000002",
+          inputHash: createHash("sha256")
+            .update(readFileSync(args[1], "utf8"))
+            .digest("hex"),
+          exitCode: 0,
+          outputAccepted: true,
+          settled: true,
+          finalAccountConfirmed: true,
+          stopped: false,
+        },
+      );
     return { code: 0 };
   });
   expect(interrupted.code).toBe(1);
@@ -471,7 +523,10 @@ it("isolates an explicitly selected packet after invalid output and retry deadli
       readFileSync(join(shardDirectory, f), "utf8"),
     ]);
   const before = snapshot();
-  const recovery = { ...options, quarantineFailedPacket: packets[0].packetId };
+  const recovery = {
+    ...options,
+    ...(selected ? { quarantineFailedPacket: packets[0].packetId } : {}),
+  };
   calls.length = 0;
   const recovered = await runCorpus(recovery, async (launch) => {
     calls.push(launch);
@@ -622,6 +677,60 @@ function candidateRunner(calls: Launch[]): Runner {
     return { code: 0 };
   };
 }
+it.each([false, true])(
+  "preserves the cumulative transport limit without model or context-only calls (quarantine=%s)",
+  async (quarantineInvalidCandidates) => {
+    const { root, directory } = fixture(2);
+    const calls: Launch[] = [];
+    let attempts = 0;
+    const runner: Runner = async (launch) => {
+      calls.push(launch);
+      const { script, args } = command(launch);
+      expect(script).toBe("chat-codex-run.ts");
+      const reservationId = `00000000-0000-4000-8000-${String(++attempts).padStart(12, "0")}`;
+      write(join(directory, "codex-logs", `${reservationId}.receipt.json`), {
+        reservationId,
+        inputHash: createHash("sha256")
+          .update(readFileSync(args[1], "utf8"))
+          .digest("hex"),
+        exitCode: 1,
+        stopReason: "deadline",
+        settled: false,
+        outputAccepted: false,
+      });
+      return { code: 1, stdout: JSON.stringify({ stopped: true }) };
+    };
+    const options = {
+      root,
+      phase: "candidate" as const,
+      concurrency: 1,
+      candidateShardBlocks: 2,
+      quarantineInvalidCandidates,
+      separateCandidateProgress: true,
+    };
+    for (let attempt = 0; attempt < 2; attempt++)
+      expect((await runCorpus(options, runner)).code).toBe(1);
+    const receiptDirectory = join(directory, "codex-logs");
+    const before = readdirSync(receiptDirectory).map((name) => [
+      name,
+      readFileSync(join(receiptDirectory, name), "utf8"),
+    ]);
+    calls.length = 0;
+    const result = await runCorpus(options, runner);
+    expect(result.code).toBe(1);
+    expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+      "candidate-shard-attempt-limit",
+    );
+    expect(calls).toHaveLength(0);
+    expect(Object.keys(result.progress.steps)).toHaveLength(0);
+    expect(
+      readdirSync(receiptDirectory).map((name) => [
+        name,
+        readFileSync(join(receiptDirectory, name), "utf8"),
+      ]),
+    ).toEqual(before);
+  },
+);
 const contextOnlyReceipt = () => ({
   quarantined: true,
   modelResultAccepted: false,
