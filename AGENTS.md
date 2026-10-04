@@ -1,5 +1,8 @@
 # Project workflow
 
+- Follow `GOAL.md` and the latest user decisions for the current objective, including the total 20% material-processing budget.
+- Group related changes into one work unit; commit its records/documents once at closure. Scale verification to changed scope. After two unsuccessful improvements of the same target, move to another ready task; keep extraction/context restoration running during approval waits.
+- Put new evidence in `data/evidence/<work-unit>/` and disposable files in Git-ignored `tmp/`. Preserve operating runtime, tunnel credentials, backups, raw inputs, and ambiguous files. Do not change paths used by running work.
 - Canonical documents are `docs/progress/index.html` and `docs/devlog/index.html`.
 - `docs/progress/snapshots/` contains immutable past editions: adjust links only at creation, never overwrite existing snapshots or describe them as the latest document.
 - Start from the broad product frame in README.md and the current priority in TODO.md.

@@ -12,6 +12,7 @@ node_modules/
 .next-resource-curation-verification/
 .next-production/
 data/
+tmp/
 *.tsbuildinfo
 playwright-report/
 test-results/
