@@ -863,17 +863,17 @@
         </p>
         <div class="meta">
           <div>
-            <b>현재 대조</b> 2026-10-04 18:06 KST · 공개 37개 불변 / 로컬
-            백업·복구 확인 / 전체 수입은 15:42 재대조
+            <b>현재 대조</b> 2026-10-04 19:36 KST · 공개 37개 불변 / 회원 글
+            수정 연결 / 백업은 18:06, 전체 수입은 15:42 대조
           </div>
           <div>
             <b>코드 검증</b> 백업·감독·권한 보완 검사 통과 · 타입·검증 빌드 종료
             0 (회차별 검사 수는 상세 근거에서 구분)
           </div>
           <div>
-            <b>운영 코드</b> 앱 <code>14e52dd</code> · 백업
-            <code>809ebf6</code> · 감독 <code>5b42d93</code>. 앱 빌드·인증 설정
-            유지
+            <b>운영 코드</b> 앱 <code>dad98eb</code> · 백업
+            <code>809ebf6</code> · 감독 <code>5b42d93</code>. 앱 새 빌드 반영,
+            인증 설정 유지
           </div>
           <div>
             <b>문서 재작성</b> 2026-10-03 18:30 KST · inside-things 작성법 적용
@@ -923,7 +923,7 @@
             </p>
             <p>
               <a
-                href="../../data/deployment/backup-automation/operating-checks.private.json"
+                href="../../data/deployment/operating-flow/member-edit-operating-checks.private.json"
                 >최신 운영 본문·회원 흐름 대조</a
               >
               ·
@@ -964,10 +964,10 @@
           </article>
         </div>
         <p class="note">
-          최신 운영 확인: 공개 본문 37개 일치, 회원의 중복 글 비공개 보류와 기존
-          세션·신고 조회 유지, 3폭 9개 화면 오류 0.
-          <a href="#latest-production-backup">최신 운영 근거</a>. 자동 백업의
-          예약 재시도와 26개 테이블·5,601행 격리 복구가 통과했습니다. 수입
+          최신 운영 확인: 공개 본문 37개 일치, 실제 회원의 수정 화면과 내용 변경
+          없는 저장, 비공개 글·검수 횟수 유지, 3폭 수정 화면 오류 0.
+          <a href="#latest-member-edit">최신 운영 근거</a>. 자동 백업의 예약
+          재시도와 26개 테이블·5,601행 격리 복구는 18:06 근거입니다. 수입
           762/2009 job은 15:42 KST 읽기 전용 재대조에서도 같습니다.
           <a href="#latest-whole-source">처리</a> ·
           <a href="#latest-editorial-resume">재개 보완과 운영 대조</a>. Google
@@ -1492,6 +1492,37 @@
             <a
               href="../../data/editorial-readability-20261003/evidence-context/completed-native-cache-check.private.json"
               >기존 실행 근거 26개 대조 · 비공개</a
+            >
+          </p>
+          <p id="latest-member-edit">
+            <strong>2026-10-04 19:36 KST · 작성자의 일반 글 수정 연결.</strong>
+            기존 작성 화면을 재사용하고 새 글 초안과 수정 초안을 분리했습니다.
+            다른 탭에서 먼저 저장한 내용을 덮어쓰지 않으며 수정본은 비공개로
+            저장한 뒤 Jev·사이트 중복 검수를 다시 받습니다. 편집 자료는 기존
+            승인 경로로만 수정합니다. Sol 검수에서 같은 글의 정상 되돌리기가
+            중복으로 차단되는 문제를 발견해 보완했고, 두 검수자가 최종 변경에
+            합의했습니다. 이전 내용 복원에도 이력·검수 횟수를 유지합니다.
+          </p>
+          <p>
+            코드 <code>dad98eb</code>를 푸시·배포했습니다. 운영에서는 기존 실제
+            회원의 1440·390·320px 수정 화면과 내용 변경 없는 저장을
+            확인했습니다. 공개 글 37개의 제목·본문·유형·태그, 비공개 글과 검수
+            횟수·DB 스키마·인증 설정은 유지됐고 새 공개 글은 0개입니다. 변경
+            저장·동시 수정 충돌·이전 내용 복원과 Jev 보류·오류는 격리 DB·모의
+            검수의 범위입니다. 관련 서버 75개, 화면·클라이언트 40개, 독립
+            되돌리기 6개와 브라우저 검사를 합산하지 않습니다. 타입·포맷·단일
+            검증 빌드가 통과했고 빌드 추적의 비공개 자료 참조는 0개였습니다.
+            배포 확인의 목록 계수 오류로 한 차례 기존 빌드에 복원한 뒤 확인
+            조건을 고쳐 같은 검증 빌드를 반영했습니다. 감독·터널·게이트웨이는
+            유지했습니다.
+            <a
+              href="../../data/deployment/operating-flow/member-edit-operating-checks.private.json"
+              >운영 확인 범위</a
+            >
+            ·
+            <a
+              href="../../data/deployment/operating-flow/member-edit-verification.private.json"
+              >명령·독립 검수·빌드 근거</a
             >
           </p>
           <p id="latest-production-backup">
