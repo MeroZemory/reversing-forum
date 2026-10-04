@@ -863,16 +863,17 @@
         </p>
         <div class="meta">
           <div>
-            <b>현재 대조</b> 2026-10-04 16:17 KST · 공개 37개 불변 / 전체 수입은
-            15:42 재대조
+            <b>현재 대조</b> 2026-10-04 18:06 KST · 공개 37개 불변 / 로컬
+            백업·복구 확인 / 전체 수입은 15:42 재대조
           </div>
           <div>
-            <b>코드 검증</b> 목적 연결 208개 · 호환 보완 193개 (합산하지 않음) ·
-            타입·검증 빌드 종료 0
+            <b>코드 검증</b> 백업·감독·권한 보완 검사 통과 · 타입·검증 빌드 종료
+            0 (회차별 검사 수는 상세 근거에서 구분)
           </div>
           <div>
-            <b>운영 코드</b> <code>14e52dd</code> · 가공 글 목적 연결과 기존
-            초안 호환 보완 반영. 앞선 신고 권한·시작 등록·작성 지침도 포함
+            <b>운영 코드</b> 앱 <code>14e52dd</code> · 백업
+            <code>809ebf6</code> · 감독 <code>5b42d93</code>. 앱 빌드·인증 설정
+            유지
           </div>
           <div>
             <b>문서 재작성</b> 2026-10-03 18:30 KST · inside-things 작성법 적용
@@ -922,7 +923,7 @@
             </p>
             <p>
               <a
-                href="../../data/deployment/editorial-purpose/operating-checks.private.json"
+                href="../../data/deployment/backup-automation/operating-checks.private.json"
                 >최신 운영 본문·회원 흐름 대조</a
               >
               ·
@@ -965,7 +966,8 @@
         <p class="note">
           최신 운영 확인: 공개 본문 37개 일치, 회원의 중복 글 비공개 보류와 기존
           세션·신고 조회 유지, 3폭 9개 화면 오류 0.
-          <a href="#latest-editorial-purpose">운영 근거·검증 범위</a>. 수입
+          <a href="#latest-production-backup">최신 운영 근거</a>. 자동 백업의
+          예약 재시도와 26개 테이블·5,601행 격리 복구가 통과했습니다. 수입
           762/2009 job은 15:42 KST 읽기 전용 재대조에서도 같습니다.
           <a href="#latest-whole-source">처리</a> ·
           <a href="#latest-editorial-resume">재개 보완과 운영 대조</a>. Google
@@ -1489,6 +1491,57 @@
             <a
               href="../../data/editorial-readability-20261003/evidence-context/completed-native-cache-check.private.json"
               >기존 실행 근거 26개 대조 · 비공개</a
+            >
+          </p>
+          <p id="latest-production-backup">
+            <strong
+              >2026-10-04 18:06 KST · 자동 로컬 백업과 실제 복구 대조.</strong
+            >
+            감독 코드 <code>5b42d93</code>와 백업 보완 <code>809ebf6</code>를
+            원자적으로 푸시했습니다. 시작 직후와 매일 09:00 KST에 백업하며
+            실패는 5분 뒤 재시도하고 백업 자식은 10분으로 제한합니다. 첫 실행은
+            소유권 설정 요청 때문에 실패했습니다. 소유권을 유지하는 권한
+            설정으로 수동 진단에서 첫 일일 사본을 생성했고, 18:01 실제 예약
+            재시도는 그 사본을 검증해 성공했습니다. 이어 이 보완을 정본 코드에
+            반영했습니다. 수정 전 실패·후 통과를 합성 자료에서 재현했으며 Sol
+            max·Astra max가 최종 코드에 상호 합의했습니다.
+          </p>
+          <p>
+            18:06 현재 운영 DB·백업·새 격리 복구본의 26개 테이블·5,601행과
+            스키마가 모두 같고 무결성·외래 키 검사가 통과했습니다. 백업과 복구
+            경로 4개의 접근 권한도 확인했습니다. 같은 날 재시도는 기존 사본을
+            반환하며 파일 내용이 유지됐습니다. 일일 사본 최대 7개 보관은 정책과
+            합성 검사 기준이며 실제 일일 사본은 1개입니다. 운영 원본에 복구본을
+            덮어쓰지 않았습니다. 앱 빌드·인증 설정·별도 게이트웨이는 유지했고
+            공개 본문 37개, 기존 회원 세션·보류 글 작성자 전용 조회·운영자
+            신고함과 1440·390·320px 총 9개 화면에서 오류·가로 넘침이 없었습니다.
+            새 공개 글은 0개입니다.
+          </p>
+          <p>
+            공통 백업 23개는 소유권 요청 보완 전 검사이며, 현재 보완에는
+            WAL·접근 권한·수정 권한만 있는 소유자·임시 파일 96개 대상 4개 검사가
+            통과했습니다. 감독 12개, 타입·포맷·같은 앱의 단일 작업자
+            <code>.next-verification</code> 빌드는 각각 종료 코드 0입니다. 검사
+            수는 합산하지 않습니다. 원격 보관·장비 손실 복구·장비 재부팅·다음 날
+            실제 예약 실행은 미검증입니다.
+            <a
+              href="../../data/deployment/backup-automation/verification.private.json"
+              >코드·독립 검수·명령·종료 코드</a
+            >
+            ·
+            <a
+              href="../../data/deployment/backup-automation/restore-checks.private.json"
+              >현재 DB·백업·격리 복구 대조</a
+            >
+            ·
+            <a
+              href="../../data/deployment/backup-automation/acl-checks.private.json"
+              >백업·복구 경로 권한</a
+            >
+            ·
+            <a
+              href="../../data/deployment/backup-automation/operating-checks.private.json"
+              >공개 37개·회원 접근·9개 화면</a
             >
           </p>
           <p id="latest-editorial-purpose">
@@ -5515,10 +5568,12 @@
                     기록, 운영 DB·환경·감독 프로세스 설정
                   </td>
                   <td>
-                    18:43에 현재 37개 운영 DB의 읽기 전용 백업·격리 복구와 25개
-                    테이블·5,595행 일치·무결성을 확인했습니다.
-                    <a href="#latest-proxy-and-backup">갱신 후 근거</a>. 이전
-                    43개 당시 실제 재시작·4,391행 복구는 별도 기록입니다. 원격
+                    10/04 18:06 자동 백업·예약 재시도와 현재 26개 테이블·5,601행
+                    격리 복구·무결성을 확인했습니다.
+                    <a href="#latest-production-backup">현재 근거</a>. 10/03
+                    18:43의 25개 테이블·5,595행은
+                    <a href="#latest-proxy-and-backup">당시 근거</a>. 이전 43개
+                    당시 실제 재시작·4,391행 복구는 별도 기록입니다. 원격
                     전송·장비 손실 복구·재부팅 자동 시작은 미검증입니다.
                   </td>
                   <td>
