@@ -45,7 +45,8 @@ Google 콜백은 `BETTER_AUTH_URL`의 origin에 `/api/auth/callback/google`을 �
 
 중복 후보 검색에는 로컬 CPU에서 고정된 비양자화 임베딩 모델을 사용합니다. 애매한 판정에는 예산이 설정된 격리 Codex CLI를 호출합니다. 설정 누락·오류·불확실한 결과는 공개를 보류합니다. 모델 파일은 로컬 캐시에 준비해야 하며 자료 배치의 비공개 예산 설정을 코드에 넣지 않습니다.
 
-임시 운영은 Windows의 Node 서버·SQLite와 Cloudflare Tunnel을 연결하는 방식으로 준비했습니다. 현재 상태·병렬 작업 DAG·검증·합의 기록은 [중간보고서](docs/progress.html)에서 관리하고, 구현 선택과 실패·수정의 교훈은 [개발기](docs/development.html)에서 설명합니다.
+임시 운영은 Windows의 Node 서버·SQLite와 Cloudflare Tunnel을 연결하는 방식으로 준비했습니다. 현재 상태·병렬 작업 DAG·검증·합의 기록은 [중간보고서](docs/progress/index.html)에서 관리하고, 구현 선택과 실패·수정의 교훈은 [개발기](docs/devlog/index.html)에서 설명합니다.
+[2026-10-04 중간보고서 스냅샷](docs/progress/snapshots/2026-10-04/index.html)은 과거 판이며, 생성 시 링크만 맞춘 불변 사본으로 최신 문서와 구분합니다.
 
 신고 접수 목록은 이메일 인증을 마친 지정 운영자만 읽을 수 있습니다. 게시 편집 계정과 별도로 신고를 검토할 실제 계정은 `REPORT_REVIEWER_USER_ID`에 정확한 사용자 ID를 설정합니다. 이 설정은 신고 조회 권한만 부여합니다.
 

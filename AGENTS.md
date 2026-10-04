@@ -1,5 +1,7 @@
 # Project workflow
 
+- Canonical documents are `docs/progress/index.html` and `docs/devlog/index.html`.
+- `docs/progress/snapshots/` contains immutable past editions: adjust links only at creation, never overwrite existing snapshots or describe them as the latest document.
 - Start from the broad product frame in README.md and the current priority in TODO.md.
 - Implement a usable flow before expanding policies or architecture. Add newly discovered work to TODO.md.
 - Ask for product decisions only when they materially block the current implementation.
