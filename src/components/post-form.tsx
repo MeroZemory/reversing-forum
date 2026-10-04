@@ -34,6 +34,7 @@ export function PostFormView({
   from?: string;
 }) {
   const {
+    editing,
     busy,
     error,
     title,
@@ -54,7 +55,10 @@ export function PostFormView({
   useEffect(() => {
     if (error) errorRef.current?.focus();
   }, [error]);
-  const choice = choices.find((item) => item.kind === kind) || choices[2];
+  const choice =
+    choices.find(
+      (item) => item.kind === (kind === "workflow" ? "analysis" : kind),
+    ) || choices[2];
   return (
     <form
       className="editor-form"
@@ -74,7 +78,10 @@ export function PostFormView({
                 name="kind"
                 value={item.kind}
                 aria-label={item.label}
-                checked={kind === item.kind}
+                checked={
+                  kind === item.kind ||
+                  (kind === "workflow" && item.kind === "analysis")
+                }
                 onChange={() => setKind(item.kind)}
               />
               <span>
@@ -183,20 +190,24 @@ export function PostFormView({
             "글을 저장하고 공개 전 기본 확인을 진행하고 있습니다."
           ) : (
             <>
-              기본 확인을 통과한 글이 공개됩니다.
+              {editing
+                ? "수정본은 비공개로 저장하며, 기본 확인을 통과하면 공개됩니다."
+                : "기본 확인을 통과한 글이 공개됩니다."}
               <br />
               {saved
                 ? "작성 내용은 이 탭에 임시 저장됩니다."
-                : "등록 전에 공개할 내용을 확인해 주세요."}
+                : editing
+                  ? "저장 전에 수정할 내용을 확인해 주세요."
+                  : "등록 전에 공개할 내용을 확인해 주세요."}
             </>
           )}
         </p>
         <div>
           <ActionLink variant="secondary" href={from}>
-            목록으로
+            {editing ? "취소" : "목록으로"}
           </ActionLink>
           <Button type="submit" disabled={busy}>
-            {busy ? "기본 확인 중…" : "글 등록하기"}
+            {busy ? "기본 확인 중…" : editing ? "수정 저장하기" : "글 등록하기"}
             <Send size={16} aria-hidden="true" />
           </Button>
         </div>

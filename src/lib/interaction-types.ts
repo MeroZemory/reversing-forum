@@ -13,6 +13,7 @@ export type CreatePostCommand = {
   tags: string[];
 };
 export type CreatePostResult = { id: string; status: PostStatus };
+export type EditPostCommand = CreatePostCommand & { expectedHash: string };
 export type CreateCommentCommand = { body: string; parentId: string | null };
 export type AuthCommand = { name?: string; email: string; password: string };
 export type AuthMode = "login" | "register";
@@ -21,8 +22,10 @@ export type PostFormProps = {
   initialPurpose?: PostPurpose;
   initialTag?: string;
   from?: string;
+  editing?: CreatePostCommand & { id: string; expectedHash: string };
 };
 export type PostFormState = {
+  editing?: boolean;
   busy: boolean;
   error: string;
   title: string;

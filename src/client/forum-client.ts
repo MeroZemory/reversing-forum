@@ -1,6 +1,7 @@
 import type {
   CreatePostCommand,
   CreatePostResult,
+  EditPostCommand,
   CreateCommentCommand,
 } from "@/lib/interaction-types";
 import type { Comment } from "@/lib/types";
@@ -43,9 +44,10 @@ async function writeJson<T>(
   url: string,
   command: unknown,
   isValid: (value: unknown) => value is T,
+  method: "POST" | "PATCH" = "POST",
 ): Promise<WriteResult<T>> {
   const response = await fetch(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(command),
   });
@@ -64,6 +66,13 @@ async function writeJson<T>(
 }
 export const createPost = (command: CreatePostCommand) =>
   writeJson("/api/posts", command, isPostResult);
+export const editPost = (postId: string, command: EditPostCommand) =>
+  writeJson(
+    `/api/posts/${encodeURIComponent(postId)}`,
+    command,
+    isPostResult,
+    "PATCH",
+  );
 export const retryPost = (postId: string) =>
   writeJson(`/api/posts/${encodeURIComponent(postId)}/retry`, {}, isPostResult);
 export const reviewPost = (postId: string) =>

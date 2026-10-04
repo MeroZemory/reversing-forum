@@ -3,6 +3,8 @@ import { cache } from "react";
 import { getViewer } from "./auth";
 import {
   getPost,
+  getEditablePost,
+  ForumError,
   listComments,
   listMyPosts,
   listPostPage,
@@ -24,6 +26,7 @@ import { currentResourceSelection } from "./resource-curation";
 import type { Author, PostStatus, PostSummary, PostDetail } from "@/lib/types";
 import type {
   AuthScreenData,
+  EditPostScreenData,
   FeedScreenData,
   MyPostsScreenData,
   NewPostScreenData,
@@ -239,6 +242,18 @@ export async function loadPostScreen(
       ? [{ id: found.id, title: found.title }]
       : [];
   });
+  let editHref: string | undefined;
+  if (viewer?.id === post.author.id) {
+    try {
+      getEditablePost(await getViewer(), id);
+      editHref = `/posts/${encodeURIComponent(id)}/edit?from=${encodeURIComponent(returnTo)}`;
+    } catch (error) {
+      if (!(
+        error instanceof ForumError && [401, 403, 404].includes(error.status)
+      ))
+        throw error;
+    }
+  }
   return {
     post,
     viewer,
@@ -256,6 +271,7 @@ export async function loadPostScreen(
         }))
       : [],
     publicUrl: `${siteUrl()}/posts/${post.id}`,
+    ...(editHref ? { editHref } : {}),
     relatedPosts,
     publicationNotice: published ? null : publicationNotice(id, viewer?.id),
   };
@@ -332,6 +348,54 @@ export async function loadNewPostScreen(
       from,
     },
   };
+}
+
+export async function loadEditPostScreen(
+  id: string,
+  params: SearchParams,
+): Promise<PageResult<EditPostScreenData> | null> {
+  const from = safeListReturn(
+    typeof params.from === "string" ? params.from : undefined,
+  );
+  const destination = `/posts/${encodeURIComponent(id)}/edit?from=${encodeURIComponent(from)}`;
+  const viewer = await getViewer();
+  if (!viewer)
+    return {
+      kind: "redirect",
+      href: `/login?returnTo=${encodeURIComponent(destination)}`,
+    };
+  if (viewer.nicknameReady === false)
+    return {
+      kind: "redirect",
+      href: `/onboarding?returnTo=${encodeURIComponent(destination)}`,
+    };
+  if (viewer.emailVerified === false)
+    return {
+      kind: "redirect",
+      href: `/account?returnTo=${encodeURIComponent(destination)}`,
+    };
+  try {
+    const { post, expectedHash } = getEditablePost(viewer, id);
+    return {
+      kind: "ready",
+      data: {
+        viewerId: viewer.id,
+        from,
+        editing: {
+          id: post.id,
+          title: post.title,
+          body: post.body,
+          kind: post.kind,
+          tags: post.tags,
+          expectedHash,
+        },
+      },
+    };
+  } catch (error) {
+    if (error instanceof ForumError && [403, 404].includes(error.status))
+      return null;
+    throw error;
+  }
 }
 
 export async function loadAuthScreen(

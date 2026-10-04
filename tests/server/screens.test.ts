@@ -4,6 +4,7 @@ import type { PostDetail, Viewer } from "@/lib/types";
 const services = vi.hoisted(() => ({
   getViewer: vi.fn(),
   getPost: vi.fn(),
+  getEditablePost: vi.fn(),
   listComments: vi.fn(),
   listMyPosts: vi.fn(),
   listPostPage: vi.fn(),
@@ -12,7 +13,17 @@ const services = vi.hoisted(() => ({
   publicationNotice: vi.fn(),
 }));
 vi.mock("@/server/auth", () => ({ getViewer: services.getViewer }));
-vi.mock("@/server/forum", () => services);
+vi.mock("@/server/forum", () => ({
+  ...services,
+  ForumError: class extends Error {
+    constructor(
+      public status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+}));
 vi.mock("@/server/duplicates/index", () => ({
   relatedPublicPosts: services.relatedPublicPosts,
 }));
@@ -27,10 +38,12 @@ import {
   loadFeedScreen,
   loadMyPostsScreen,
   loadNewPostScreen,
+  loadEditPostScreen,
   loadPostScreen,
   loadViewer,
   loadResourcesScreen,
 } from "@/server/screens";
+import { ForumError } from "@/server/forum";
 
 const viewer: Viewer = {
   id: "member",
@@ -53,6 +66,10 @@ beforeEach(() => {
   vi.resetAllMocks();
   services.getViewer.mockResolvedValue(null);
   services.getPost.mockReturnValue(null);
+  services.getEditablePost.mockReturnValue({
+    post,
+    expectedHash: "a".repeat(64),
+  });
   services.listMyPosts.mockReturnValue([]);
   services.listComments.mockReturnValue([]);
   services.listPublicTopics.mockReturnValue([]);
@@ -61,6 +78,59 @@ beforeEach(() => {
 });
 
 describe("screen data boundary", () => {
+  it("preserves the edit destination through login and sends only the editable payload to the client", async () => {
+    const from = "/me?status=held";
+    const guest = await loadEditPostScreen(post.id, { from });
+    expect(guest?.kind).toBe("redirect");
+    if (guest?.kind === "redirect") {
+      expect(
+        new URL(guest.href, "https://example.test").searchParams.get(
+          "returnTo",
+        ),
+      ).toBe(`/posts/post/edit?from=${encodeURIComponent(from)}`);
+    }
+    services.getViewer.mockResolvedValue({
+      ...viewer,
+      emailVerified: true,
+      nicknameReady: true,
+    });
+    const own = await loadEditPostScreen(post.id, { from });
+    expect(own).toEqual({
+      kind: "ready",
+      data: {
+        viewerId: viewer.id,
+        from,
+        editing: {
+          id: post.id,
+          title: post.title,
+          body: post.body,
+          kind: post.kind,
+          tags: post.tags,
+          expectedHash: "a".repeat(64),
+        },
+      },
+    });
+    expect(JSON.stringify(own)).not.toContain(viewer.email);
+    expect(JSON.stringify(own)).not.toContain("screening_evidence");
+  });
+  it("never offers an editor link when the server rejects a receipt-linked post", async () => {
+    services.getViewer.mockResolvedValue(viewer);
+    services.getPost.mockReturnValue(post);
+    services.getEditablePost.mockImplementation(() => {
+      throw new ForumError(403, "편집 자료");
+    });
+    expect((await loadPostScreen(post.id, {}))?.editHref).toBeUndefined();
+    expect(await loadEditPostScreen(post.id, {})).toBeNull();
+  });
+  it("shows the edit link only on the author's ordinary post", async () => {
+    services.getViewer.mockResolvedValue(viewer);
+    services.getPost.mockReturnValue(post);
+    expect((await loadPostScreen(post.id, { from: "/me" }))?.editHref).toBe(
+      "/posts/post/edit?from=%2Fme",
+    );
+    services.getViewer.mockResolvedValue({ ...viewer, id: "other" });
+    expect((await loadPostScreen(post.id, {}))?.editHref).toBeUndefined();
+  });
   it("keeps a resource route through detail, comments and guest write login", async () => {
     services.getPost.mockReturnValue(post);
     const from = "/resources/executables?tag=Ghidra&page=2";

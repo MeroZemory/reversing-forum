@@ -318,6 +318,122 @@ function postInput(input: unknown) {
   return { title, body, kind: data.kind as PostKind, tags };
 }
 
+export function getEditablePost(
+  viewer: Viewer | null,
+  id: string,
+): { post: PostDetail; expectedHash: string } {
+  const user = member(viewer);
+  const row = db
+    .prepare(`${postSelect()} WHERE p.id=? AND p.author_id=?`)
+    .get(id, user.id) as Row | undefined;
+  if (!row) throw new ForumError(404, "글을 찾을 수 없습니다.");
+  const hasReceipts = db
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='editorial_receipts'",
+    )
+    .get();
+  if (
+    row.author_id === process.env.EDITORIAL_AUTHOR_USER_ID ||
+    (hasReceipts &&
+      db.prepare("SELECT 1 FROM editorial_receipts WHERE post_id=?").get(id))
+  )
+    throw new ForumError(
+      403,
+      "편집 자료는 일반 글 수정으로 변경할 수 없습니다.",
+    );
+  const post = detail(row);
+  return {
+    post,
+    expectedHash: payloadHash({
+      title: post.title,
+      body: post.body,
+      kind: post.kind,
+      tags: post.tags,
+    }),
+  };
+}
+
+export async function updatePost(
+  viewer: Viewer | null,
+  id: string,
+  input: unknown,
+): Promise<{ id: string; status: PostDetail["status"] }> {
+  const user = member(viewer);
+  getEditablePost(user, id);
+  initPublicationTables();
+  let snapshot: ReturnType<typeof postInput>;
+  let expectedHash: string;
+  try {
+    snapshot = postInput(input);
+    const expected = (input as Record<string, unknown>).expectedHash;
+    if (typeof expected !== "string" || !/^[a-f0-9]{64}$/.test(expected))
+      throw new ForumError(400, "현재 글 내용을 다시 확인해 주세요.");
+    expectedHash = expected;
+  } catch (error) {
+    if (!allowWriteAttempt(user.id))
+      throw new ForumError(429, "잠시 후 다시 시도해 주세요.");
+    throw error;
+  }
+  const hash = payloadHash(snapshot);
+  // Exact retransmission succeeds even with the original, now stale hash.
+  const current = getEditablePost(user, id);
+  if (current.expectedHash === hash) return { id, status: current.post.status };
+  if (!allowWriteAttempt(user.id))
+    throw new ForumError(429, "잠시 후 다시 시도해 주세요.");
+  const changed = db
+    .transaction(() => {
+      const current = getEditablePost(user, id);
+      if (current.expectedHash === hash)
+        return { id, status: current.post.status, fresh: false };
+      if (current.expectedHash !== expectedHash)
+        throw new ForumError(
+          409,
+          "다른 수정이 저장되었습니다. 현재 글을 다시 확인해 주세요.",
+        );
+      const bodyHash = payloadHash(snapshot.body);
+      if (
+        db
+          .prepare(
+            "SELECT 1 FROM post_payloads WHERE author_id=? AND payload_hash=? AND post_id<>?",
+          )
+          .get(user.id, hash, id) ||
+        db
+          .prepare("SELECT 1 FROM posts WHERE author_id=? AND id<>? AND body=?")
+          .get(user.id, id, snapshot.body) ||
+        db
+          .prepare(
+            "SELECT 1 FROM post_payloads WHERE author_id=? AND body_hash=? AND post_id<>?",
+          )
+          .get(user.id, bodyHash, id)
+      )
+        throw new ForumError(
+          409,
+          "이미 작성한 본문입니다. 내 글을 확인해 주세요.",
+        );
+      // Preserve the pre-edit snapshot, including older posts without a receipt.
+      db.prepare(
+        "INSERT OR IGNORE INTO post_payloads(author_id,payload_hash,body_hash,post_id) VALUES(?,?,?,?)",
+      ).run(user.id, current.expectedHash, payloadHash(current.post.body), id);
+      db.prepare(
+        "INSERT OR IGNORE INTO post_payloads(author_id,payload_hash,body_hash,post_id) VALUES(?,?,?,?)",
+      ).run(user.id, hash, bodyHash, id);
+      db.prepare(
+        "UPDATE posts SET title=?,body=?,kind=?,tags=?,status='pending',screening_evidence=NULL WHERE id=? AND author_id=?",
+      ).run(
+        snapshot.title,
+        snapshot.body,
+        snapshot.kind,
+        JSON.stringify(snapshot.tags),
+        id,
+        user.id,
+      );
+      return { id, status: "pending" as const, fresh: true };
+    })
+    .immediate();
+  if (!changed.fresh) return { id, status: changed.status };
+  return screenOwnedPost(user.id, id, snapshot);
+}
+
 export async function createPost(
   viewer: Viewer | null,
   input: unknown,
@@ -440,6 +556,7 @@ function screenOwnedPost(
     {
       key: `${independentReview ? "review" : "post"}:${id}:${payloadHash(snapshot)}`,
       snapshot,
+      excludePostId: id,
       independentReview,
     },
     (result) => {

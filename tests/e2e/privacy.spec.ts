@@ -4,6 +4,57 @@ import Database from "better-sqlite3";
 import { basename, dirname, resolve } from "node:path";
 
 const createdPostIds: string[] = [];
+test("수정본도 Jev 보류나 오류가 나면 작성자만 볼 수 있다", async ({
+  page,
+  playwright,
+  baseURL,
+}, info) => {
+  const origin = baseURL!;
+  await register(page.request, origin);
+  const { result } = await post(
+    page.request,
+    origin,
+    `격리 수정본 비공개 검수 ${info.project.name}`,
+  );
+  createdPostIds.push(result.id);
+  const title = `새 조건을 반영한 비공개 수정본 ${info.project.name}`;
+  const body =
+    "격리 검수에서 수정본의 새로운 재현 조건과 오류 여부를 확인합니다.";
+  await page.goto(`/posts/${result.id}?from=%2Fme`);
+  await page.getByRole("link", { name: "수정", exact: true }).click();
+  await page.getByLabel("제목", { exact: true }).fill(title);
+  await page.getByLabel("본문", { exact: true }).fill(body);
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith(`/api/posts/${result.id}`),
+  );
+  await page
+    .getByRole("button", { name: "수정 저장하기", exact: true })
+    .click();
+  expect((await saved).status()).toBe(202);
+  await expect(
+    page.getByRole("heading", { name: title, exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "댓글 작성" })).toHaveCount(0);
+  expect((await page.request.get(`/api/posts/${result.id}`)).status()).toBe(
+    200,
+  );
+  const guest = await playwright.request.newContext({ baseURL: origin });
+  try {
+    expect((await guest.get(`/api/posts/${result.id}`)).status()).toBe(404);
+    expect(await (await guest.get("/api/posts")).text()).not.toContain(
+      result.id,
+    );
+    expect(await (await guest.get("/sitemap.xml")).text()).not.toContain(
+      result.id,
+    );
+    await register(guest, origin);
+    expect((await guest.get(`/api/posts/${result.id}`)).status()).toBe(404);
+  } finally {
+    await guest.dispose();
+  }
+});
 test.afterEach(async ({}, info) => {
   if (!createdPostIds.length) return;
   const databasePath = String(info.project.metadata.databasePath);

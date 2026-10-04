@@ -1,5 +1,5 @@
 import { test, expect, type TestInfo } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { basename, dirname, resolve } from "node:path";
 import { readFileSync } from "node:fs";
@@ -13,6 +13,192 @@ function isolatedDatabase(info: TestInfo) {
 }
 
 const createdPostIds: string[] = [];
+
+test("작성자는 같은 글의 이전 내용으로 되돌리며 검수 이력을 유지한다", async ({
+  request,
+}, info) => {
+  const origin = String(info.project.use.baseURL);
+  await register(request, origin);
+  const { result } = await post(
+    request,
+    origin,
+    "되돌리기를 확인하는 격리 분석 글",
+  );
+  createdPostIds.push(result.id);
+  const original = (await (await request.get(`/api/posts/${result.id}`)).json())
+    .post;
+  const payload = (value: typeof original) => ({
+    title: value.title,
+    body: value.body,
+    kind: value.kind,
+    tags: value.tags,
+  });
+  const originalHash = createHash("sha256")
+    .update(JSON.stringify(payload(original)))
+    .digest("hex");
+  const revised = {
+    ...payload(original),
+    title: "새 조건을 반영한 분석 제목",
+    expectedHash: originalHash,
+  };
+  expect(
+    (
+      await request.patch(`/api/posts/${result.id}`, {
+        headers: { Origin: origin },
+        data: revised,
+      })
+    ).status(),
+  ).toBe(200);
+  const current = (await (await request.get(`/api/posts/${result.id}`)).json())
+    .post;
+  const currentHash = createHash("sha256")
+    .update(JSON.stringify(payload(current)))
+    .digest("hex");
+  expect(
+    (
+      await request.patch(`/api/posts/${result.id}`, {
+        headers: { Origin: origin },
+        data: { ...payload(original), expectedHash: currentHash },
+      })
+    ).status(),
+  ).toBe(200);
+  const restored = (await (await request.get(`/api/posts/${result.id}`)).json())
+    .post;
+  expect(payload(restored)).toEqual(payload(original));
+  const db = isolatedDatabase(info);
+  expect(
+    db
+      .prepare("SELECT COUNT(*) AS n FROM post_payloads WHERE post_id=?")
+      .get(result.id),
+  ).toEqual({ n: 2 });
+  expect(
+    db
+      .prepare("SELECT attempts FROM publication_attempts WHERE request_key=?")
+      .get(`post:${result.id}:${originalHash}`),
+  ).toEqual({ attempts: 2 });
+  db.close();
+});
+
+test("작성자 글 수정은 초안을 분리하고 동시 수정을 덮어쓰지 않는다", async ({
+  page,
+  browser,
+}, info) => {
+  const origin = String(info.project.use.baseURL);
+  await register(page.request, origin);
+  const { result } = await post(
+    page.request,
+    origin,
+    "호출 관계를 확인한 격리 수정 검수 글",
+  );
+  createdPostIds.push(result.id);
+  const postPath = `/posts/${result.id}?from=%2Fme`;
+  const editPath = `/posts/${result.id}/edit?from=%2Fme`;
+  const updatedTitle = "직접 확인한 호출 관계와 수정한 분석 조건";
+  const updatedBody =
+    "Ghidra에서 확인한 함수 호출 관계에 분석 환경과 재현 조건을 보충했습니다.";
+  await page.goto(postPath);
+  await page.getByRole("link", { name: "수정", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "글 수정", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "글 등록하기", exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("제목", { exact: true }).fill(updatedTitle);
+  await page.getByLabel("본문", { exact: true }).fill(updatedBody);
+  await page.goto("/new?from=%2Fme");
+  await expect(page.getByLabel("제목", { exact: true })).toHaveValue("");
+  await page.goto(editPath);
+  await expect(page.getByLabel("제목", { exact: true })).toHaveValue(
+    updatedTitle,
+  );
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+    ).toBe(false);
+    await page.screenshot({
+      path: info.outputPath(`post-edit-${width}.png`),
+      fullPage: true,
+    });
+  }
+  const stale = await page.context().newPage();
+  await stale.goto(editPath);
+  const submitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith(`/api/posts/${result.id}`),
+  );
+  await page
+    .getByRole("button", { name: "수정 저장하기", exact: true })
+    .click();
+  expect((await submitted).status()).toBe(200);
+  await expect(page).toHaveURL(new RegExp(`/posts/${result.id}\\?from=%2Fme$`));
+  await expect(
+    page.getByRole("heading", { name: updatedTitle, exact: true }),
+  ).toBeVisible();
+  await stale
+    .getByLabel("본문", { exact: true })
+    .fill(
+      "다른 탭의 수정본이 먼저 저장된 뒤 다시 보내는 오래된 수정 내용입니다.",
+    );
+  const conflict = stale.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().endsWith(`/api/posts/${result.id}`),
+  );
+  await stale
+    .getByRole("button", { name: "수정 저장하기", exact: true })
+    .click();
+  expect((await conflict).status()).toBe(409);
+  await expect(stale.locator(".editor-form").getByRole("alert")).toBeVisible();
+  await expect(stale.getByLabel("본문", { exact: true })).toHaveValue(
+    "다른 탭의 수정본이 먼저 저장된 뒤 다시 보내는 오래된 수정 내용입니다.",
+  );
+  await stale.close();
+  const otherContext = await browser.newContext({ baseURL: origin });
+  try {
+    const other = await otherContext.newPage();
+    await other.goto(`/posts/${result.id}`);
+    await expect(other.locator(".article")).toContainText(updatedBody);
+    await expect(
+      other.getByRole("link", { name: "수정", exact: true }),
+    ).toHaveCount(0);
+    const guest = await other.request.patch(`/api/posts/${result.id}`, {
+      headers: { Origin: origin },
+      data: {
+        title: updatedTitle,
+        body: updatedBody,
+        kind: "question",
+        tags: ["Ghidra"],
+        expectedHash: "a".repeat(64),
+      },
+    });
+    expect(guest.status()).toBe(401);
+    await register(other.request, origin);
+    expect((await other.goto(editPath))?.status()).toBe(404);
+    const forbidden = await other.request.patch(`/api/posts/${result.id}`, {
+      headers: { Origin: origin },
+      data: {
+        title: updatedTitle,
+        body: updatedBody,
+        kind: "question",
+        tags: ["Ghidra"],
+        expectedHash: "a".repeat(64),
+      },
+    });
+    expect(forbidden.status()).toBe(404);
+  } finally {
+    await otherContext.close();
+  }
+  const db = isolatedDatabase(info);
+  expect(
+    db.prepare("SELECT title,body,status FROM posts WHERE id=?").get(result.id),
+  ).toEqual({ title: updatedTitle, body: updatedBody, status: "published" });
+  db.close();
+});
 
 test("비공개 신고 접수는 회원 세션을 확인하고 운영자에게만 보인다", async ({
   page,

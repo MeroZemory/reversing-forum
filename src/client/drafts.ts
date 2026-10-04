@@ -16,6 +16,11 @@ export function saveDraft(key: string, value: string): boolean {
 }
 export const postDraftKey = (viewerId: string) =>
   `reversing-all:draft:${viewerId}`;
+export const postEditDraftKey = (
+  viewerId: string,
+  postId: string,
+  expectedHash: string,
+) => `reversing-all:edit:${viewerId}:${postId}:${expectedHash}`;
 export const commentDraftKey = (
   viewerId: string,
   postId: string,

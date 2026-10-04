@@ -1,4 +1,5 @@
 import type { FeedFilters } from "@/lib/feed-navigation";
+import type { PostFormProps } from "@/lib/interaction-types";
 import type {
   Author,
   Comment,
@@ -60,6 +61,7 @@ export type PostScreenData = {
   fromMyPosts: boolean;
   postPath: string;
   publicUrl: string;
+  editHref?: string;
   relatedPosts?: { id: string; title: string }[];
   publicationNotice?: {
     reason:
@@ -90,6 +92,9 @@ export type NewPostScreenData = {
   initialPurpose?: FeedFilters["purpose"];
   initialTag?: string;
   from: string;
+};
+export type EditPostScreenData = PostFormProps & {
+  editing: NonNullable<PostFormProps["editing"]>;
 };
 export type AuthScreenData = {
   mode: "login" | "register";

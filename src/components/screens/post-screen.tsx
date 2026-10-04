@@ -102,6 +102,7 @@ export function PostScreen({
           </strong>
           <span>·</span>
           <time dateTime={post.createdAt}>{formatDate(post.createdAt)}</time>
+          {data.editHref && <Link href={data.editHref}>수정</Link>}
         </div>
         {post.editorial && (
           <aside

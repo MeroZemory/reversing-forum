@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createComment, createPost } from "@/client/forum-client";
+import { createComment, createPost, editPost } from "@/client/forum-client";
 import type { CreatePostCommand } from "@/lib/interaction-types";
 import type { Comment } from "@/lib/types";
 
@@ -28,6 +28,32 @@ function respond(value: unknown, status = 201) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("forum client response contracts", () => {
+  it("sends an edit as PATCH with its original content token", async () => {
+    respond({ id: "post-id", status: "pending" }, 202);
+    const command = { ...post, expectedHash: "a".repeat(64) };
+    const result = await editPost("post/id", command);
+    expect(result).toEqual({
+      ok: true,
+      data: { id: "post-id", status: "pending" },
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/posts/post%2Fid",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify(command),
+      }),
+    );
+  });
+  it("preserves an editing conflict instead of treating it as a saved post", async () => {
+    respond({ error: "다른 탭에서 글이 변경됐습니다." }, 409);
+    await expect(
+      editPost("post-id", { ...post, expectedHash: "a".repeat(64) }),
+    ).resolves.toEqual({
+      ok: false,
+      status: 409,
+      error: "다른 탭에서 글이 변경됐습니다.",
+    });
+  });
   it.each([
     [201, "published"],
     [202, "held"],
