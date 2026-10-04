@@ -9,7 +9,7 @@
 
 2026-10-04 15:42 KST 읽기 전용 재대조에서도 원자료 525084메시지 중 실제 결과 수입은 201653메시지·762/2009개 작업이다. 1247개 작업이 미처리이며, 현재 편집 가능한 후보 343개는 기존 검토 43개·후속 296개·새 작성 입력 4개로 연결했다. 문맥 보류 후보 787개와 복구 입력 752묶음의 준비를 처리·게시 완료로 계상하지 않는다.
 
-2026-10-05 06:34 KST 현재 운영 공개 224개(기존 승인 37개 보존·새 글 187개). 이번 173개는 159가공/14문맥보류 → 독립 검토 37통과/122품질보류 → 벌크 중복 1제외 → 35공개/1미확정·게시오류0이며, 미확정 1개는 승인·본문·횟수를 유지한 두 번째 확인 뒤 비공개로 남겼다. 운영 본문 224개·새 승인 본문 35개·기존 37개·사이트맵·3폭 9화면이 일치한다. 06:36 KST 원자료 1218/2009 수입·791잔여·해시불일치0·문맥 복구 88묶음 수입은 의미 완료와 구분한다. 세 번째 호출 차단은 Sol max·Astra max 합의 후 84ad88a로 푸시·재개했고, 새 후보 147개 가공과 문맥 복원을 병행한다. [운영 대조](data/evidence/corpus-next-ready-20261005/final-operating-checks.private.json) · [원자료 범위](data/evidence/corpus-next-ready-20261005/source-state.private.json) · [진행과 승인 DAG](docs/progress/index.html#status)
+2026-10-05 07:59 KST 현재 운영 공개 266개(기존 승인 37개 보존·새 글 229개). 이번 147개는 독립 검토 44통과/103품질 보류 → 벌크 중복 2제외 → 42공개·게시오류0이며, 미확정 2개는 승인·본문·횟수를 유지한 두 번째 검사에서 통과했다. 이전 공개 224개·새 승인 본문 42개·원본 승인 37개·운영 API 266개·사이트맵·3폭 9화면이 일치한다. 08:00 KST 원자료 1368/2009 수입·641잔여·해시불일치0은 격리/문맥 보류를 포함하며 의미 완료와 구분한다. 새 후보 583개 가공·독립 검토는 추출과 병행 중이고, 문맥 복구는 완료된 88묶음을 보존한다. 07:04 KST 공개 224개 시점 DB의 로컬 백업·격리 복구 27테이블 대조와 무결성도 통과했다. [운영 대조](data/evidence/corpus-following-ready-20261005/final-operating-checks.private.json) · [원자료 범위](data/evidence/corpus-following-ready-20261005/source-state.private.json) · [새 검토 진행](data/evidence/corpus-additional-ready-20261005/progress.private.json) · [백업·복구](data/evidence/production-public224-local-backup-20261005/checks.private.json) · [승인 DAG](docs/progress/index.html#status)
 
 ## 1. 커뮤니티 기본 흐름
 
