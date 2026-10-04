@@ -456,7 +456,7 @@ it("오케스트레이터 repair opt-in은 기존 native hash를 유지하고 �
   });
   const write = (file: string, value: unknown) =>
     writeFileSync(file, JSON.stringify(value));
-  for (const mode of ["candidate", "draft", "review"]) {
+  for (const mode of ["candidate", "draft", "draft-purpose", "review"]) {
     write(
       join(data, "schemas", `${mode}.schema.json`),
       JSON.parse(

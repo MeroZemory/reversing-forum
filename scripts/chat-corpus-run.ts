@@ -628,6 +628,7 @@ export async function runCorpus(
     input: string,
     output: string,
     allowCandidateSubset = false,
+    quarantineInvalidOutput = false,
   ) => {
     const source = read(input);
     const schemaMode =
@@ -655,6 +656,7 @@ export async function runCorpus(
           output,
           schema,
           blocksPerShard: options.candidateShardBlocks,
+          quarantineInvalidOutput,
           cacheDirectory: join(directory, "candidate-shards"),
           invoke: (args) => invoke("chat-codex-run.ts", args),
           validate: (value, template) => validate(value, template),
@@ -768,7 +770,7 @@ export async function runCorpus(
           let helperAttempted = false;
           try {
             // Candidate generation may run once; the repair/import helper never calls models.
-            await model("candidate", input, output, repair);
+            await model("candidate", input, output, repair, quarantine);
             const hash = digest([
               read(input),
               read(output),
@@ -819,7 +821,13 @@ export async function runCorpus(
               !quarantine ||
               !(error instanceof Error) ||
               (!quarantineValidationCodes.has(error.message) &&
-                !(!helperAttempted && error.message === "incomplete-output")) ||
+                !(
+                  !helperAttempted &&
+                  [
+                    "incomplete-output",
+                    "candidate-shard-output-invalid",
+                  ].includes(error.message)
+                )) ||
               !existsSync(output)
             )
               throw error;

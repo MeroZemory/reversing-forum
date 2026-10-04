@@ -29,6 +29,7 @@ export async function runCandidateShards(options: {
   schema: string;
   cacheDirectory: string;
   blocksPerShard: number;
+  quarantineInvalidOutput?: boolean;
   invoke: (args: string[]) => Promise<unknown>;
   validate: (value: Json, schema: Json) => void;
 }): Promise<void> {
@@ -139,6 +140,21 @@ export async function runCandidateShards(options: {
     }
   };
   const blocks: Json[] = [];
+  const writeCombined = (complete: boolean) => {
+    unchanged();
+    const temporary = `${output}.shards.tmp`;
+    rmSync(temporary, { force: true });
+    privateWrite(
+      temporary,
+      JSON.stringify({ packetId: source.packetId, complete, blocks }),
+    );
+    try {
+      if (existsSync(output)) throw new Error("candidate-shard-cache-invalid");
+      renameSync(temporary, output);
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  };
   for (
     let offset = 0;
     offset < source.blocks.length;
@@ -219,6 +235,10 @@ export async function runCandidateShards(options: {
             check(result, child);
           } catch {
             if (call === 0) continue;
+            // Rejected bytes stay separate. This prefix is only a quarantine
+            // envelope, never an accepted model result or reusable child receipt.
+            if (options.quarantineInvalidOutput === true && existsSync(attempt))
+              writeCombined(false);
             throw new Error("candidate-shard-output-invalid");
           }
           privateWrite(childOutput, text);
@@ -243,15 +263,6 @@ export async function runCandidateShards(options: {
   }
   const combined = { packetId: source.packetId, complete: true, blocks };
   check(combined, source);
-  unchanged();
   // Parent envelope validation and native import remain the final gates.
-  const temporary = `${output}.shards.tmp`;
-  rmSync(temporary, { force: true });
-  privateWrite(temporary, JSON.stringify(combined));
-  try {
-    if (existsSync(output)) throw new Error("candidate-shard-cache-invalid");
-    renameSync(temporary, output);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
+  writeCombined(true);
 }

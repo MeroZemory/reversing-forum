@@ -231,6 +231,7 @@ describe("whole-block candidate transport shards", () => {
     await expect(
       runCandidateShards({
         ...options,
+        quarantineInvalidOutput: true,
         invoke: async (args) => {
           calls.push(args);
           writeFileSync(
@@ -252,6 +253,30 @@ describe("whole-block candidate transport shards", () => {
     expect(files.some((f) => /\.(output|receipt|attempt)\.json$/.test(f))).toBe(
       false,
     );
+  });
+
+  it("does not create a quarantine envelope when successful transport returns no output", async () => {
+    const { options, calls } = fixture();
+    await expect(
+      runCandidateShards({
+        ...options,
+        quarantineInvalidOutput: true,
+        invoke: async (args) => {
+          calls.push(args);
+        },
+      }),
+    ).rejects.toThrow("candidate-shard-output-invalid");
+    expect(calls).toHaveLength(2);
+    expect(existsSync(options.output)).toBe(false);
+    const directory = join(
+      options.cacheDirectory,
+      readdirSync(options.cacheDirectory)[0],
+    );
+    expect(
+      readdirSync(directory).some((f) =>
+        /\.(output|receipt|rejected)\.json$/.test(f),
+      ),
+    ).toBe(false);
   });
 
   it("revalidates cached scope even when the stored output hash matches", async () => {

@@ -8,6 +8,8 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  existsSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -259,11 +261,7 @@ describe("optional candidate shard routing", () => {
     );
   });
 
-  it.each([
-    "malformed",
-    "account-unavailable-or-changed",
-    "batch-proxy-budget-boundary",
-  ])(
+  it.each(["account-unavailable-or-changed", "batch-proxy-budget-boundary"])(
     "stops %s without import or quarantine even when quarantine is requested",
     async (failure) => {
       const { root } = fixture(1);
@@ -278,11 +276,6 @@ describe("optional candidate shard routing", () => {
         },
         async (launch) => {
           calls.push(launch);
-          const { args } = command(launch);
-          if (failure === "malformed") {
-            write(args[2], { complete: true });
-            return { code: 0 };
-          }
           return { code: 1, errorCode: failure };
         },
       );
@@ -291,14 +284,129 @@ describe("optional candidate shard routing", () => {
         calls.map(command).every((c) => c.script === "chat-codex-run.ts"),
       ).toBe(true);
       expect(
-        result.progress.failures?.some(
-          (f) =>
-            f.errorCode ===
-            (failure === "malformed"
-              ? "candidate-shard-output-invalid"
-              : failure),
-        ),
+        result.progress.failures?.some((f) => f.errorCode === failure),
       ).toBe(true);
+    },
+  );
+
+  it.each(["malformed", "out-of-scope"])(
+    "quarantines a rejected %s shard packet and continues without accepting model completion",
+    async (failure) => {
+      const { root, directory, packets } = fixture(2);
+      const source = read(packets[0].file);
+      source.blocks = Array.from({ length: 5 }, (_, n) => ({
+        ...source.blocks[0],
+        batchId: id(n + 10),
+      }));
+      write(packets[0].file, source);
+      const calls: Launch[] = [];
+      const rejected: string[] = [];
+      const options = {
+        root,
+        phase: "candidate" as const,
+        concurrency: 1,
+        candidateShardBlocks: 2,
+        repairRelevant: true,
+        quarantineInvalidCandidates: true,
+        separateCandidateProgress: true,
+      };
+      const result = await runCorpus(options, async (launch) => {
+        calls.push(launch);
+        const { script, args } = command(launch);
+        if (script === "chat-codex-run.ts") {
+          const child = read(args[1]);
+          const output = {
+            packetId: child.packetId,
+            complete: true,
+            blocks: child.blocks.map((b: any) => ({
+              ...candidateOutput(child.packetId).blocks[0],
+              batchId: b.batchId,
+            })),
+          };
+          if (
+            child.packetId === packets[0].packetId &&
+            child.blocks[0].batchId === id(12)
+          ) {
+            output.blocks[0].noncandidateRanges = [[0, 999]];
+            const text = failure === "malformed" ? "{" : JSON.stringify(output);
+            rejected.push(text);
+            writeFileSync(args[2], text);
+          } else write(args[2], output);
+        } else if (args[0] === "context-only") {
+          const prefix = read(args[1]);
+          expect(prefix.complete).toBe(false);
+          expect(prefix.blocks.map((b: any) => b.batchId)).toEqual([
+            id(10),
+            id(11),
+          ]);
+          const receipt = contextOnlyReceipt();
+          receipt.importedBatches = 5;
+          receipt.contextCounts.needsContextMessages = 5;
+          return { code: 0, stdout: JSON.stringify(receipt) };
+        } else {
+          expect(args[0]).toBe("repair-relevant");
+          expect(read(args[1]).packetId).toBe(packets[1].packetId);
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              repaired: true,
+              repairCounts: {
+                needsContextMessages: 0,
+                needsContextCandidates: 0,
+              },
+            }),
+          };
+        }
+        return { code: 0 };
+      });
+      expect(result.code).toBe(0);
+      expect(result.progress.counts).toMatchObject({
+        imported: 6,
+        quarantinedPackets: 1,
+        needsContext: 5,
+      });
+      expect(result.progress.failures?.at(-1)?.errorCode).toBe(
+        "candidate-shard-output-invalid",
+      );
+      expect(
+        Object.keys(result.progress.steps).filter((key) =>
+          key.startsWith("candidate:"),
+        ),
+      ).toHaveLength(1);
+      expect(
+        result.progress.steps[`import:${packets[0].packetId}`],
+      ).toMatchObject({ quarantined: true, needsContext: 5 });
+      expect(
+        calls.filter((c) => command(c).script === "chat-codex-run.ts"),
+      ).toHaveLength(4);
+      expect(calls.every((c) => !c.signal.aborted)).toBe(true);
+      const cache = join(directory, "candidate-shards");
+      const shardDirectory = readdirSync(cache)
+        .map((d) => join(cache, d))
+        .find((d) => readdirSync(d).some((f) => f.endsWith(".rejected.json")))!;
+      const files = readdirSync(shardDirectory);
+      expect(files.filter((f) => f.endsWith(".receipt.json"))).toHaveLength(1);
+      expect(
+        files
+          .filter((f) => f.endsWith(".rejected.json"))
+          .map((f) => readFileSync(join(shardDirectory, f), "utf8"))
+          .sort(),
+      ).toEqual(rejected.sort());
+      const before = files.map((f) => [
+        f,
+        readFileSync(join(shardDirectory, f), "utf8"),
+      ]);
+      calls.length = 0;
+      const resumed = await runCorpus(options, async (launch) => {
+        calls.push(launch);
+        return { code: 0 };
+      });
+      expect(resumed.code).toBe(0);
+      expect(calls).toHaveLength(0);
+      expect(
+        files.map((f) => [f, readFileSync(join(shardDirectory, f), "utf8")]),
+      ).toEqual(before);
+      expect(existsSync(join(directory, "corpus-progress.json"))).toBe(false);
     },
   );
 });
