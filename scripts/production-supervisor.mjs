@@ -139,6 +139,89 @@ try {
   });
 }
 
+// 별도 프로세스에서 백업하고 실패하면 재시도만 예약한다.
+export function startBackupSchedule(
+  run,
+  {
+    now = () => Date.now(),
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+  } = {},
+) {
+  let stopped = false;
+  let timer;
+  async function tick() {
+    if (stopped) return;
+    const day = 24 * 60 * 60 * 1000;
+    const started = now();
+    const date = new Date(started).toISOString().slice(0, 10);
+    let succeeded = false;
+    try {
+      await run(date);
+      succeeded = true;
+    } catch {
+      /* 웹 운영은 계속한다. */
+    }
+    if (stopped) return;
+    const nextDay = (Math.floor(started / day) + 1) * day;
+    const completed = now();
+    const dateChanged =
+      Math.floor(completed / day) !== Math.floor(started / day);
+    timer = setTimer(
+      tick,
+      succeeded ? (dateChanged ? 0 : nextDay - completed) : 5 * 60 * 1000,
+    );
+  }
+  void tick();
+  return () => {
+    stopped = true;
+    clearTimer(timer);
+  };
+}
+
+export function runBackupProcess(
+  root,
+  children,
+  {
+    day = new Date().toISOString().slice(0, 10),
+    timeoutMs = 10 * 60 * 1000,
+    spawnChild = spawn,
+  } = {},
+) {
+  return new Promise((resolveBackup, reject) => {
+    const child = spawnChild(
+      process.execPath,
+      [join(root, "scripts/production-backup.mjs"), "--day", day],
+      {
+        cwd: root,
+        windowsHide: true,
+        stdio: ["ignore", "ignore", "ignore"],
+      },
+    );
+    children.add(child);
+    let failed = false;
+    child.once("error", () => {
+      failed = true;
+    });
+    // 시간 초과로 종료한 자식의 실제 종료를 확인한 뒤에만 재시도한다.
+    const timer = setTimeout(() => {
+      failed = true;
+      child.kill();
+    }, timeoutMs);
+    timer.unref();
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      children.delete(child);
+      const succeeded = code === 0 && !failed;
+      console.log(
+        `${new Date().toISOString()} 백업-${succeeded ? "성공" : "실패"}`,
+      );
+      if (succeeded) resolveBackup();
+      else reject(new Error("backup-failed"));
+    });
+  });
+}
+
 export async function main() {
   // Run with a hidden detached Node process. Credentials stay in ignored local files.
   const root = resolve(import.meta.dirname, "..");
@@ -153,9 +236,11 @@ export async function main() {
   const children = new Set();
   let stopping = false;
   let ownsPid = false;
+  let stopBackups = () => {};
   function stop() {
     if (stopping) return;
     stopping = true;
+    stopBackups();
     for (const child of children) child.kill();
     try {
       if (
@@ -249,6 +334,9 @@ export async function main() {
       {
         TUNNEL_TOKEN_FILE: join(directory, "tunnel-token.txt"),
       },
+    );
+    stopBackups = startBackupSchedule((day) =>
+      runBackupProcess(root, children, { day }),
     );
   } catch (error) {
     stop();
