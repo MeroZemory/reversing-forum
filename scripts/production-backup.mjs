@@ -123,7 +123,8 @@ foreach ($sid in $sids) {
   $acl.AddAccessRule($rule)
 }
 # 부모 DACL만 설정한다. SetSecurityInfo 계열의 기존 자식 자동 전파는 피한다.
-if (![BackupFileSecurity]::SetFileSecurity($path, [uint32]2147483653, $acl.GetSecurityDescriptorBinaryForm())) { throw 'acl-write-failed' }
+# 기존 소유권은 유지하고 보호된 DACL만 설정한다.
+if (![BackupFileSecurity]::SetFileSecurity($path, [uint32]2147483652, $acl.GetSecurityDescriptorBinaryForm())) { throw 'acl-write-failed' }
 $actual = if ($directory) { [System.IO.Directory]::GetAccessControl($path) } else { [System.IO.File]::GetAccessControl($path) }
 $rules = @($actual.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]))
 if (!$actual.AreAccessRulesProtected -or $actual.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $user.Value -or $rules.Count -ne $sids.Count) { throw 'unsafe-acl' }

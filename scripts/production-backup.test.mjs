@@ -721,6 +721,36 @@ $file.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($u
   assert.equal(acl(join(f.root, "data/production"), true), productionBefore);
 });
 
+test("수정 권한만 있는 소유자의 폴더에서도 소유권 변경 없이 백업 권한을 제한한다", async (t) => {
+  const f = fixture(t);
+  ps(`
+$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = [System.Security.AccessControl.DirectorySecurity]::new()
+$acl.SetAccessRuleProtection($true, $false)
+$acl.SetOwner($user)
+$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($user, 'Modify', 'ContainerInherit, ObjectInherit', 'None', 'Allow'))
+[System.IO.Directory]::SetAccessControl(${psPath(f.directory)}, $acl)
+`);
+  const original = Database.prototype.backup;
+  let observed = false;
+  Database.prototype.backup = function (path, options) {
+    assertPrivate(f.directory, true);
+    assertPrivate(path);
+    observed = true;
+    return original.call(this, path, options);
+  };
+  try {
+    assert.equal(
+      (await backupProduction({ root: f.root, now: at(1) })).status,
+      "created",
+    );
+  } finally {
+    Database.prototype.backup = original;
+  }
+  assert.equal(observed, true);
+  assertPrivate(daily(f, 1));
+});
+
 test("중단된 부분 파일 96개가 있어도 권한을 묶음 검증하고 같은 날·다음 날 백업한다", async (t) => {
   const f = fixture(t);
   await backupProduction({ root: f.root, now: at(1) });
