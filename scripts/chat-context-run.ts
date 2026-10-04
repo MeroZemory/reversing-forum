@@ -23,6 +23,7 @@ type Options = {
   retryInvalidOutput?: number;
   solRepair?: boolean;
   limitPackets?: number;
+  packetIdsFile?: string;
   root?: string;
   signal?: AbortSignal;
 };
@@ -68,6 +69,8 @@ const codes = new Set([
   "rate-limit",
   "model-unavailable",
   "invalid-context-run-options",
+  "invalid-context-run-packet-ids",
+  "unknown-context-run-packet-id",
   "invalid-context-repair-mode",
   "invalid-context-run-progress",
   "invalid-context-run-manifest",
@@ -175,6 +178,23 @@ function inputSnapshot(directory: string, entry: Entry): ContextRecoveryInput {
     throw new Error("context-run-input-hash-mismatch");
   return input;
 }
+function selectPackets(packets: Entry[], file?: string): Entry[] {
+  if (file === undefined) return packets;
+  const ids = json(readRaw(file));
+  if (
+    !Array.isArray(ids) ||
+    !ids.length ||
+    !ids.every(hex) ||
+    new Set(ids).size !== ids.length
+  )
+    throw new Error("invalid-context-run-packet-ids");
+  const byId = new Map(packets.map((entry) => [entry.packetId, entry]));
+  return ids.map((id) => {
+    const entry = byId.get(id);
+    if (!entry) throw new Error("unknown-context-run-packet-id");
+    return entry;
+  });
+}
 function outputScope(input: ContextRecoveryInput, raw: string): Output {
   const output = json(raw) as Output;
   if (
@@ -261,6 +281,13 @@ function outputScope(input: ContextRecoveryInput, raw: string): Output {
 export function parseContextOptions(args: string[]): Options {
   const options: Options = { concurrency: 2 };
   for (let i = 0; i < args.length; i += 2) {
+    if (args[i] === "--packet-ids") {
+      const file = args[i + 1];
+      if (!file?.trim() || file.startsWith("--") || options.packetIdsFile)
+        throw new Error("invalid-context-run-options");
+      options.packetIdsFile = file;
+      continue;
+    }
     const value = Number(args[i + 1]);
     if (!args[i + 1] || !number(value) || value < 1)
       throw new Error("invalid-context-run-options");
@@ -286,7 +313,10 @@ export async function runContext(
       (!number(options.retryInvalidOutput) ||
         options.retryInvalidOutput > 2)) ||
     (options.limitPackets !== undefined &&
-      (!number(options.limitPackets) || options.limitPackets < 1))
+      (!number(options.limitPackets) || options.limitPackets < 1)) ||
+    (options.packetIdsFile !== undefined &&
+      (typeof options.packetIdsFile !== "string" ||
+        !options.packetIdsFile.trim()))
   )
     throw new Error("invalid-context-run-options");
   const root = resolve(options.root ?? "."),
@@ -412,7 +442,12 @@ export async function runContext(
   try {
     if (options.signal?.aborted) abort();
     await invoke("chat-context-recovery.ts", ["prepare"]);
-    const pending = entries(directory)
+    const pending = selectPackets(
+      entries(directory),
+      options.packetIdsFile === undefined
+        ? undefined
+        : resolve(root, options.packetIdsFile),
+    )
       .filter((entry) => {
         inputSnapshot(directory, entry);
         const previous = progress.steps[entry.packetId];

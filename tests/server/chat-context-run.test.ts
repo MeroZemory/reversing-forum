@@ -178,6 +178,20 @@ it("bounds concurrency and packet limits without accepting extra flags", () => {
   expect(
     parseContextOptions(["--concurrency", "4", "--limit-packets", "2"]),
   ).toEqual({ concurrency: 4, limitPackets: 2 });
+  expect(
+    parseContextOptions([
+      "--packet-ids",
+      "tmp/selected packets.json",
+      "--limit-packets",
+      "2",
+      "--concurrency",
+      "4",
+    ]),
+  ).toEqual({
+    concurrency: 4,
+    limitPackets: 2,
+    packetIdsFile: "tmp/selected packets.json",
+  });
   for (const args of [
     ["--concurrency", "5"],
     ["--concurrency", "0"],
@@ -186,10 +200,196 @@ it("bounds concurrency and packet limits without accepting extra flags", () => {
     ["--limit-packets"],
     ["--repair-relevant", "1"],
     ["--retry-invalid-output", "3"],
+    ["--packet-ids"],
+    ["--packet-ids", " "],
+    ["--packet-ids", "--concurrency", "2"],
+    ["--packet-ids", "a.json", "--packet-ids", "b.json"],
   ])
     expect(() => parseContextOptions(args)).toThrow(
       "invalid-context-run-options",
     );
+});
+
+it.each([
+  "duplicate",
+  "uppercase",
+  "short",
+  "non-string",
+  "object",
+  "empty",
+  "json",
+  "unknown",
+  "unmanifested",
+])("rejects %s selection before any model or import", async (kind) => {
+  const f = fixture(2),
+    calls: Launch[] = [],
+    file = join(f.root, "selected.json"),
+    selected = f.inputs[0].packetId;
+  const values: Record<string, unknown> = {
+    duplicate: [selected, selected],
+    uppercase: [selected.toUpperCase()],
+    short: ["abc"],
+    "non-string": [42],
+    object: { packetIds: [selected] },
+    empty: [],
+    json: [selected],
+    unknown: [selected, id(900)],
+    unmanifested: [selected, id(900)],
+  };
+  write(file, values[kind]);
+  if (kind === "json") writeFileSync(file, "[invalid json");
+  if (kind === "unmanifested")
+    write(join(f.directory, `${id(900)}.input.json`), f.inputs[0]);
+  const result = await runContext(
+    { root: f.root, concurrency: 2, limitPackets: 1, packetIdsFile: file },
+    runnerFor(f, calls),
+  );
+  expect(result.code).toBe(1);
+  expect(result.counts.importedPackets).toBe(0);
+  expect(result.progress.failure?.errorCode).toBe(
+    kind === "json"
+      ? "invalid-context-run-json"
+      : ["unknown", "unmanifested"].includes(kind)
+        ? "unknown-context-run-packet-id"
+        : "invalid-context-run-packet-ids",
+  );
+  expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
+});
+
+it.each([
+  "packet-id",
+  "content-id",
+  "input-hash",
+  "manifest-id",
+  "manifest-hash",
+])(
+  "preflights selected %s mismatch beyond the packet limit with zero model calls",
+  async (kind) => {
+    const f = fixture(2),
+      calls: Launch[] = [],
+      file = join(f.root, "selected.json"),
+      base = runnerFor(f, calls);
+    write(
+      file,
+      f.inputs.map((input) => input.packetId),
+    );
+    const result = await runContext(
+      { root: f.root, concurrency: 2, limitPackets: 1, packetIdsFile: file },
+      async (launch) => {
+        const result = await base(launch);
+        if (command(launch).args[0] !== "prepare") return result;
+        const indexFile = join(f.directory, "manifest.json"),
+          index = read(indexFile),
+          part = index.manifests[0],
+          shardFile = join(f.directory, part.file),
+          shard = read(shardFile),
+          entry = shard.packets[1],
+          inputFile = join(f.directory, entry.file),
+          input = read(inputFile);
+        if (kind === "manifest-hash") {
+          write(shardFile, { packets: [] });
+          return result;
+        }
+        if (kind === "manifest-id") {
+          entry.packetId = id(900);
+          entry.file = `${entry.packetId}.input.json`;
+          write(join(f.directory, entry.file), input);
+          write(file, [f.inputs[0].packetId, entry.packetId]);
+        } else {
+          if (kind === "packet-id") input.packetId = id(900);
+          else input.instructions = "changed synthetic instructions";
+          write(inputFile, input);
+          if (kind === "input-hash") return result;
+          entry.hash = contextRecoveryDigest(readFileSync(inputFile, "utf8"));
+        }
+        const raw = JSON.stringify(shard),
+          digest = contextRecoveryDigest(raw);
+        write(join(f.directory, `${digest}.manifest.json`), shard);
+        index.manifests = [{ file: `${digest}.manifest.json`, hash: digest }];
+        write(indexFile, index);
+        return result;
+      },
+    );
+    expect(result.code).toBe(1);
+    expect(result.progress.failure?.errorCode).toBe(
+      kind === "manifest-hash"
+        ? "context-run-manifest-hash-mismatch"
+        : "context-run-input-hash-mismatch",
+    );
+    expect(result.counts.importedPackets).toBe(0);
+    expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
+  },
+);
+
+it("selects ready packets in list order while preserving fifteen completed steps and four failed outputs", async () => {
+  const f = fixture(22),
+    calls: Launch[] = [],
+    base = runnerFor(f, calls),
+    file = join(f.root, "selected packets.json");
+  const completed = await runContext(
+    { root: f.root, concurrency: 1, limitPackets: 15 },
+    base,
+  );
+  expect(completed.code).toBe(0);
+  expect(completed.counts.importedPackets).toBe(15);
+  const steps = structuredClone(completed.progress.steps),
+    cached = join(f.directory, `${f.inputs[20].packetId}.output.json`);
+  write(cached, output(f.inputs[20]));
+  const failed = f.inputs.slice(15, 19).map((input) => {
+    const path = join(f.directory, `${input.packetId}.output.json`),
+      raw = "{synthetic failed output";
+    writeFileSync(path, raw);
+    return { path, raw };
+  });
+  write(join(f.pipeline, "context-progress.json"), {
+    ...completed.progress,
+    failure: {
+      script: "chat-codex-run.ts",
+      exitCode: 1,
+      errorCode: "network-failure",
+    },
+  });
+  write(
+    file,
+    [0, 20, 19, 21].map((n) => f.inputs[n].packetId),
+  );
+  calls.length = 0;
+  const options = {
+    root: f.root,
+    concurrency: 4,
+    limitPackets: 2,
+    packetIdsFile: "selected packets.json",
+  };
+  const result = await runContext(options, base);
+  expect(result.code).toBe(0);
+  expect(result.counts).toMatchObject({
+    importedPackets: 17,
+    needsContext: 34,
+    candidates: 0,
+  });
+  expect(result.progress.steps).toMatchObject(steps);
+  expect(
+    calls
+      .filter((c) => command(c).script === "chat-codex-run.ts")
+      .map((c) => read(command(c).args[1]).packetId),
+  ).toEqual([f.inputs[19].packetId]);
+  expect(readFileSync(cached, "utf8")).toBe(
+    JSON.stringify(output(f.inputs[20])),
+  );
+  for (const { path, raw } of failed)
+    expect(readFileSync(path, "utf8")).toBe(raw);
+  calls.length = 0;
+  expect((await runContext(options, base)).counts.importedPackets).toBe(18);
+  expect(
+    calls
+      .filter((c) => command(c).script === "chat-codex-run.ts")
+      .map((c) => read(command(c).args[1]).packetId),
+  ).toEqual([f.inputs[21].packetId]);
+  calls.length = 0;
+  expect((await runContext(options, base)).counts.importedPackets).toBe(18);
+  expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
+  for (const { path, raw } of failed)
+    expect(readFileSync(path, "utf8")).toBe(raw);
 });
 
 it("explicit repair passes the bounded Sol flag only to the candidate runner", async () => {
