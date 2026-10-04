@@ -863,18 +863,16 @@
         </p>
         <div class="meta">
           <div>
-            <b>현재 대조</b> 2026-10-04 15:21 KST · 운영 37개 불변 / 수입은
-            08:27 스냅샷
+            <b>현재 대조</b> 2026-10-04 16:17 KST · 공개 37개 불변 / 전체 수입은
+            15:42 재대조
           </div>
           <div>
-            <b>코드 검증</b> 신고 권한 29개 · 감독 실행 6개 · 타입·검증 빌드
-            종료 0
+            <b>코드 검증</b> 목적 연결 208개 · 호환 보완 193개 (합산하지 않음) ·
+            타입·검증 빌드 종료 0
           </div>
           <div>
-            <b>운영 코드</b> <code>ecd0d37</code> · 신고 권한과 감독 실행 반영.
-            작성 지침 <code>573efe8</code>도 포함. 자료 가공 도구
-            <code>d441abd</code> (후보 구간 보완·원자 푸시 완료) /
-            <code>c7cc407</code> (앞선 재개 보완)
+            <b>운영 코드</b> <code>14e52dd</code> · 가공 글 목적 연결과 기존
+            초안 호환 보완 반영. 앞선 신고 권한·시작 등록·작성 지침도 포함
           </div>
           <div>
             <b>문서 재작성</b> 2026-10-03 18:30 KST · inside-things 작성법 적용
@@ -910,27 +908,27 @@
         <p class="lead">
           운영에서 읽을 수 있는 편집 글은 <strong>37개</strong>이며, 기존 44개
           표본 중 7개는 비공개입니다. 최신 읽기 전용 대조에서 37개의 제목·본문과
-          외부 공개 목록이 유지됐습니다. 실제 회원의 비공개 신고 저장과 운영자
-          조회, 웹 프로세스 재시작 후 신고·세션 유지를 확인했습니다. 운영
-          게시물은 변경하지 않았습니다. <strong>새 글 추가는 0개</strong>입니다.
+          유형·태그가 운영 DB와 일치합니다. 실제 회원이 등록 버튼으로 같은 글을
+          제출하면 비공개로 보류되고 재전송해도 글이 늘지 않습니다. 기존
+          신고·세션도 유지됐습니다. <strong>새 글 추가는 0개</strong>입니다.
         </p>
         <div class="cards">
           <article class="card">
             <h3>지금 읽을 수 있는 것</h3>
             <p>
               공개 글 37개, 편집 자료의 출처·공유 범위 안내, 회원의 신고·삭제
-              요청 경로입니다. 실제 기존 계정으로 신고 저장과 지정 운영자 조회를
-              확인했습니다. 보류 글은 작성자만 볼 수 있습니다.
+              요청 경로입니다. 실제 회원의 글 등록·중복 보류와 지정 운영자의
+              신고 조회를 확인했습니다. 보류 글은 작성자만 볼 수 있습니다.
             </p>
             <p>
               <a
-                href="../data/editorial-readability-20261003/evidence-context/context-reference-validation.private.json"
-                >최신 운영 본문·목록 대조와 최종 검수 근거</a
+                href="../data/deployment/editorial-purpose/operating-checks.private.json"
+                >최신 운영 본문·회원 흐름 대조</a
               >
               ·
               <a
-                href="../data/editorial-readability-20261003/evidence-context/public-ui.private.json"
-                >운영 화면 확인</a
+                href="../data/editorial-readability-20261003/evidence-context/context-reference-validation.private.json"
+                >최종 본문 검수 근거</a
               >
             </p>
           </article>
@@ -965,10 +963,10 @@
           </article>
         </div>
         <p class="note">
-          최신 운영 확인: 공개 37개 불변, 실제 비공개 신고 1건 저장·조회와 앱
-          재시작 후 유지. 로그인 후 자동 시작 등록·중복 실행 방지 완료.
-          <a href="#latest-operating-flow">운영 근거·검증 범위</a>. 수입
-          762/2009 job은 08:27 KST 스냅샷입니다.
+          최신 운영 확인: 공개 본문 37개 일치, 회원의 중복 글 비공개 보류와 기존
+          세션·신고 조회 유지, 3폭 9개 화면 오류 0.
+          <a href="#latest-editorial-purpose">운영 근거·검증 범위</a>. 수입
+          762/2009 job은 15:42 KST 읽기 전용 재대조에서도 같습니다.
           <a href="#latest-whole-source">처리</a> ·
           <a href="#latest-editorial-resume">재개 보완과 운영 대조</a>. Google
           로그인은 사용자 확인과 실제 세션 근거로 완료했습니다. 이메일 인증 결과
@@ -1491,6 +1489,70 @@
             <a
               href="../data/editorial-readability-20261003/evidence-context/completed-native-cache-check.private.json"
               >기존 실행 근거 26개 대조 · 비공개</a
+            >
+          </p>
+          <p id="latest-editorial-purpose">
+            <strong
+              >2026-10-04 16:17 KST · 글 목적 연결과 실제 등록 흐름
+              확인.</strong
+            >
+            새 가공 글의 질문/공유 목적을 작성 입력에서 독립 검토·게시용
+            자료·서버 저장까지 연결했습니다. 목적과 본문이 다르면 검토에서
+            보류합니다. 독립 검수가 발견한 기존 초안 호환 문제와 목적 검토
+            누락을 고친 뒤 Sol max·Astra max가 최종 코드에 상호 합의했습니다.
+            코드
+            <code>14e52dd</code>를 원자적으로 푸시하고 운영에 배포했습니다. 기존
+            공개 37개와 후속 296개의 재분류·새 게시 완료로 계상하지 않습니다.
+          </p>
+          <p>
+            관련 208개와 후속 보완 193개 검사는 서로 다른 범위이며 합산하지
+            않습니다. 타입 검사와 작업자 1개 제한
+            <code>.next-verification</code>
+            빌드는 종료 코드 0입니다. 실제 기존 초안 8묶음·156개는 당시 작성
+            형식으로 읽기 전용 검증했고 입력·출력 파일과 목록이 유지됐습니다.
+            운영에서는 공개 37개의 제목·본문·유형·태그 일치와 내 글·비공개 중복
+            글·신고함의 1440·390·320px 총 9개 화면을 확인했습니다. 페이지
+            오류·가로 넘침은 없었습니다.
+          </p>
+          <p>
+            실제 기존 회원이 운영 글 등록 버튼으로 공개 글과 같은 내용을
+            제출했을 때 비공개 보류 1건이 저장됐습니다. 같은 요청 재전송은 같은
+            글을 반환했고, 비회원·다른 회원에게는 404, 작성자에게만 200입니다.
+            비회원·이메일 미인증·다른 출처의 요청, 잘못된 제목과 제목만 바꾼
+            재전송도 거절했습니다. 임베딩·Jev·LLM 호출 없이 기존 완전 중복
+            판정을 확인한 결과입니다. 중복되지 않는 일반 글의 공개 완주나 새
+            로그인 검증과는 구분합니다. 새 공개 글·회원·댓글은 0개입니다.
+          </p>
+          <p>
+            <a
+              href="../data/deployment/editorial-purpose/verification.private.json"
+              >구현·독립 검수·검증 명령과 배포</a
+            >
+            ·
+            <a
+              href="../data/deployment/editorial-purpose/cache-validation.private.json"
+              >기존 초안 8묶음 형식·파일 보존</a
+            >
+            ·
+            <a
+              href="../data/deployment/editorial-purpose/operating-checks.private.json"
+              >운영 37개 본문·9개 화면</a
+            >
+            ·
+            <a
+              href="../data/deployment/operating-flow/member-post-checks.private.json"
+              >실제 글 등록·보류·재전송·접근</a
+            >
+          </p>
+          <p>
+            15:42 KST 원자료·작업·후보를 읽기 전용으로 다시 대조했습니다. 전체
+            525084메시지 중 수입 201653메시지·762/2009개 작업, 미처리 1247개
+            작업이며 현재 편집 가능 후보 343개·문맥 보류 787개입니다. 앞선
+            집계와 같고 전체 ingest는 미완료입니다. 이 대조에서 자료 가공·수입·
+            신규 게시는 수행하지 않았습니다.
+            <a
+              href="../data/deployment/operating-flow/current-source-scope.private.json"
+              >현재 원자료·작업·후보 범위</a
             >
           </p>
           <p id="latest-operating-flow">
@@ -5172,8 +5234,8 @@
               <tr>
                 <th>전체 미처리 범위·누락 대조 / 메인</th>
                 <td>
-                  08:27 KST 전수 준비 2009 job·수입 762 job·미처리 1247 job. 첫
-                  packet 후보 22개 문맥 보류
+                  15:42 KST 읽기 전용 재대조: 준비 2009 job·수입 762 job·미처리
+                  1247 job. 첫 packet 후보 22개 문맥 보류
                 </td>
                 <td>
                   T3 출력 → T4 검증·귀속, T4/T5의 적격 출력 → T7 / 해당 입력이
@@ -5189,9 +5251,21 @@
                   H → I, F → I / 구현자와 검수자 분리·Sol max/Astra max 상호
                   합의 완료. 운영 비공개 신고 저장·3폭 화면·작성자 전용 보류
                   조회, 로그인 후 시작 등록·중복 실행 방지·실제 앱 재시작 후
-                  저장 유지 완료. 담당 워커 종료. 일반 게시물 작성·장비 재부팅과
+                  저장 유지 완료. 16:17 새 운영 코드에서도 기존 세션·신고함을
+                  확인했습니다. 회원 글 등록 버튼의 중복 보류·재전송·작성자 전용
+                  조회도 완료했습니다. 중복되지 않는 글의 공개·장비 재부팅과
                   원격 복구는 별도 남은 범위이며, 앞선 사용자 확인으로 완료한
                   Google 로그인은 유지합니다.
+                </td>
+              </tr>
+              <tr>
+                <th>가공 글 목적 연결 / Jason·Franklin, 통합 메인</th>
+                <td>새 작성 입력·목적이 있는 초안·같은 공개본의 독립 검토</td>
+                <td>
+                  T7 → T8 → T9 → T10 → T11 / 질문·공유 목적을 게시까지 연결하고
+                  본문과 목적 불일치를 검토합니다. 기존 초안은 실제 작성
+                  형식으로 확인합니다. Sol max·Astra max 상호 합의·운영 배포
+                  완료, 담당 워커 종료. 기존 글 재분류·후속 재가공·새 게시 0개
                 </td>
               </tr>
               <tr>
