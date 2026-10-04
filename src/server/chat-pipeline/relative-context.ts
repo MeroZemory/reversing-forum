@@ -160,16 +160,13 @@ export function candidateRelativeContext(
         const row = chronology.get(id) as
           | { local: unknown; sourceId: unknown; messageOrder: unknown }
           | undefined;
-        const flags = tuple ? message[3] : undefined;
         rows.push({
           index,
           local: row?.local,
           sourceId: row?.sourceId,
           order: row?.messageOrder,
-          duplicateAmbiguous: tuple
-            ? Array.isArray(flags) && flags.includes("duplicate-uncertain")
-            : !!(message as { duplicateAmbiguous?: boolean })
-                .duplicateAmbiguous,
+          // Cross-export matching uncertainty does not erase known chronology
+          // within one export. Keep that flag in the supplied message instead.
         });
       }
       const segmentStarts = relativeSegmentStarts(rows);

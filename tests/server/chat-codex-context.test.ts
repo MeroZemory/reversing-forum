@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { editorialEvidence } from "../../src/server/chat-pipeline/editorial-evidence";
 import {
   candidateRelativeContext,
   codexPrompt,
@@ -47,7 +48,7 @@ function fixture() {
   const db = new Database(":memory:");
   db.exec(`CREATE TABLE runs(id TEXT PRIMARY KEY, active INTEGER);
     INSERT INTO runs VALUES ('active',1),('old',0);
-    CREATE TABLE ledger(run_id TEXT, id TEXT, record TEXT, PRIMARY KEY(run_id,id));
+    CREATE TABLE ledger(run_id TEXT, id TEXT, position INTEGER, record TEXT, PRIMARY KEY(run_id,id));
     CREATE TABLE jobs(run_id TEXT, id TEXT, record TEXT, PRIMARY KEY(run_id,id));`);
   function add(
     id: string,
@@ -56,9 +57,10 @@ function fixture() {
     order = 0,
     run = "active",
   ) {
-    db.prepare("INSERT INTO ledger VALUES (?,?,?)").run(
+    db.prepare("INSERT INTO ledger VALUES (?,?,?,?)").run(
       run,
       id,
+      order,
       JSON.stringify({
         message: {
           timestamp: local === null ? null : { local },
@@ -157,43 +159,151 @@ describe("후보 상대 구간", () => {
       /비공개|2025|10:01|sourceId|position/,
     );
   });
-  it("날짜·큰 간격·백업 전환·역행·누락·오래된 중복을 분리한다", () => {
-    const { db, add } = fixture();
+  it.each([false, true])(
+    "중복 불확실성 %s에서도 날짜·간격·백업·역행·누락·반복 순서를 분리한다",
+    (duplicateAmbiguous) => {
+      const { db, add } = fixture();
+      try {
+        [
+          ["2025-01-01T10:00", "a", 0],
+          ["2025-01-01T10:30", "a", 1],
+          ["2025-01-01T11:01", "a", 2],
+          ["2025-01-02T00:00", "a", 3],
+          ["2025-01-02T00:01", "b", 0],
+          ["2025-01-02T00:00", "b", 1],
+          [null, "b", 2],
+          ["2025-01-02T00:02", "b", 3],
+          ["2025-01-02T00:03", "b", 1],
+          ["2025-01-02T00:04", "b", 4],
+          ["2025-01-02T00:05", "b", 3],
+          ["2025-01-02T00:06", "b", 5],
+        ].forEach(([local, source, order], i) =>
+          add(
+            `m${i}`,
+            local as string | null,
+            source as string,
+            order as number,
+          ),
+        );
+        const result = candidateRelativeContext(db, {
+          batchId: "block",
+          messages: Array.from({ length: 12 }, (_, i) => ({
+            id: `m${i}`,
+            duplicateAmbiguous,
+          })),
+        });
+        expect(result[0].segmentStarts).toEqual([
+          0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+        ]);
+        expect(Object.keys(result[0])).toEqual([
+          "batchId",
+          "segmentStarts",
+          "rule",
+        ]);
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+  it("중복 불확실성을 유지하며 순차 질문·응답의 후보와 편집 구간을 일치시킨다", () => {
+    const { db, add, job } = fixture();
     try {
-      [
-        ["2025-01-01T10:00", "a", 0],
-        ["2025-01-01T10:30", "a", 1],
-        ["2025-01-01T11:01", "a", 2],
-        ["2025-01-02T00:00", "a", 3],
-        ["2025-01-02T00:01", "b", 0],
-        ["2025-01-02T00:00", "b", 1],
-        [null, "b", 2],
-        ["2025-01-02T00:02", "b", 3],
-        ["2025-01-02T00:03", "b", 1],
-        ["2025-01-02T00:04", "b", 4],
-        ["2025-01-02T00:05", "b", 3],
-        ["2025-01-02T00:06", "b", 5],
-      ].forEach(([local, source, order], i) =>
-        add(`m${i}`, local as string | null, source as string, order as number),
+      const ids = ["a-q", "a-r", "b-q", "b-r"];
+      add(ids[0], "2025-01-01T10:00", "source-a", 0);
+      add(ids[1], "2025-01-01T10:01", "source-a", 1);
+      add(ids[2], "2025-01-01T10:00", "source-b", 10);
+      add(ids[3], "2025-01-01T10:01", "source-b", 11);
+      job(ids);
+      const messages = ids.map((id, index) => ({
+        id,
+        speaker: "발언자1",
+        text: index % 2 === 0 ? "종료를 기다리는 함수는?" : "pthread_join",
+        attachmentMissing: false,
+        duplicateAmbiguous: true,
+        held: false,
+      }));
+      const draft = editorialEvidence(
+        db,
+        ids,
+        new Map(messages.map((message) => [message.id, message])),
       );
-      const result = candidateRelativeContext(db, {
-        batchId: "block",
-        messages: Array.from({ length: 12 }, (_, i) => ({ id: `m${i}` })),
-      });
-      expect(result[0].segmentStarts).toEqual([
-        0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      expect(draft.evidence.map((message) => message.id)).toEqual(ids);
+      expect(draft.evidence.map((message) => message.segment)).toEqual([
+        0, 0, 1, 1,
       ]);
-      expect(Object.keys(result[0])).toEqual([
-        "batchId",
-        "segmentStarts",
-        "rule",
-      ]);
+      expect(
+        draft.evidence.every((message) => message.duplicateAmbiguous),
+      ).toBe(true);
+      const draftStarts = draft.evidence.flatMap((message, index, evidence) =>
+        index === 0 || message.segment !== evidence[index - 1].segment
+          ? [index]
+          : [],
+      );
+      const inputs = [
+        { batchId: "block", messages },
+        {
+          blocks: [
+            {
+              batchId: "block",
+              messages: messages.map((message, index) => [
+                index,
+                message.speaker,
+                message.text,
+                ["duplicate-uncertain"],
+              ]),
+            },
+          ],
+        },
+      ];
+      for (const input of inputs) {
+        const source = JSON.stringify(input);
+        const context = candidateRelativeContext(db, input);
+        expect(context[0].segmentStarts).toEqual(draftStarts);
+        expect(codexPrompt(source, context).prompt).toContain(source);
+        expect(JSON.stringify(input)).toBe(source);
+      }
+      // Direct callers still get the conservative ambiguity guard.
+      expect(
+        relativeSegmentStarts(
+          [0, 1].map((index) => ({
+            index,
+            local: `2025-01-01T10:0${index}`,
+            sourceId: "source-a",
+            order: index,
+            duplicateAmbiguous: true,
+          })),
+        ),
+      ).toEqual([0, 1]);
     } finally {
       db.close();
     }
   });
 
-  it("원래 숫자 별칭을 유지하며 생략·중복 불확실성·블록을 분리한다", () => {
+  it("중복 불확실성이 있어도 누락된 원장 행과 null 뒤에서 구간을 다시 시작한다", () => {
+    const { db, add } = fixture();
+    try {
+      for (let i = 0; i < 4; i++)
+        add(`m${i}`, `2025-01-01T10:0${i}`, "source", i);
+      const message = (id: string) => ({ id, duplicateAmbiguous: true });
+      const context = candidateRelativeContext(db, {
+        batchId: "block",
+        messages: [
+          message("m0"),
+          message("missing-ledger-row"),
+          message("m1"),
+          null,
+          message("m2"),
+          message("m3"),
+        ],
+      });
+      expect(context[0].segmentStarts).toEqual([0, 1, 2, 4]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("원래 숫자 별칭을 유지하며 생략과 블록 경계를 분리한다", () => {
     const { db, add, job } = fixture();
     try {
       for (let i = 0; i < 5; i++)
@@ -213,7 +323,7 @@ describe("후보 상대 구간", () => {
           { batchId: "block", messages: [[1, "익명", "내용", []]] },
         ],
       });
-      expect(result.map((r) => r.segmentStarts)).toEqual([[0, 2, 3, 4], [1]]);
+      expect(result.map((r) => r.segmentStarts)).toEqual([[0, 2], [1]]);
       expect(() =>
         candidateRelativeContext(db, {
           blocks: [{ batchId: "missing", messages: [[0]] }],
