@@ -153,7 +153,7 @@ export interface ModelBudgetConfig {
   weekEnd?: string;
   batchStartedAt?: string;
   weeklyProxyUsd: { low: number; central: number; high: number };
-  maxPercent: number;
+  maxPercent: number; // Existing batches use 10; explicit approval permits up to 20.
   source?: string;
   sources?: string[];
   basis?: string;
@@ -189,7 +189,7 @@ export function validateModelBudget(
     range.low > range.central ||
     range.central > range.high ||
     !positive(config.maxPercent) ||
-    config.maxPercent > 10 ||
+    config.maxPercent > 20 ||
     !Number.isFinite(start) ||
     !Number.isFinite(end) ||
     end <= start ||

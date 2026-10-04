@@ -340,7 +340,7 @@ describe("pipeline model proxy budget", () => {
       ledger.close();
     }
   });
-  it("uses low denominator, rejects >10%, expires closed, ignores global quota delta", () => {
+  it("keeps the configured 10% low-denominator cap, expires closed, ignores global quota delta", () => {
     const ledger = new ModelBudget(":memory:", config);
     try {
       expect(ledger.summary().limitProxyUsd).toBe(1);
@@ -434,7 +434,12 @@ describe("pipeline model proxy budget", () => {
       ledger.close();
     }
     for (const override of [
-      { maxPercent: 11 },
+      { maxPercent: 20.01 },
+      { maxPercent: NaN },
+      { maxPercent: Infinity },
+      { maxPercent: -Infinity },
+      { maxPercent: 0 },
+      { accountId: "" },
       { creditsPerProxyUsd: 1 },
       { allowCreditUsage: "true" },
       { weeklyProxyUsd: { low: 20, central: 10, high: 30 } },
@@ -468,6 +473,82 @@ describe("pipeline model proxy budget", () => {
         "abc",
       ),
     ).toBeCloseTo(0.0240003);
+  });
+  it("explicitly permits 20% in the same window without clearing charged or unknown usage", () => {
+    const directory = mkdtempSync(join(tmpdir(), "model-budget-test-"));
+    const path = join(directory, "budget.sqlite");
+    const original = new ModelBudget(path, config);
+    let unknownId: string;
+    try {
+      expect(original.seedUsage("prior", "gpt-6.1-sol", "review", usage)).toBe(
+        true,
+      );
+      unknownId = original.reserve("gpt-6-luna", "candidate", 0.75, "unknown")!;
+      expect(unknownId).not.toBeNull();
+      expect(
+        original.reserve("gpt-6-luna", "candidate", 1.1, "blocked"),
+      ).toBeNull();
+    } finally {
+      original.close();
+    }
+    const expanded = new ModelBudget(path, { ...config, maxPercent: 20 });
+    const otherAccount = new ModelBudget(path, {
+      ...config,
+      maxPercent: 20,
+      accountId: "different",
+    });
+    try {
+      const before = expanded.summary();
+      expect(before.limitProxyUsd).toBe(2);
+      expect(before.window.start).toBe(Date.parse(config.batchStartedAt!));
+      expect(before.window.end).toBe(before.window.start + 7 * 86_400_000);
+      expect(before.requests).toBe(2);
+      expect(before.unknownRequests).toBe(1);
+      expect(before.chargedOrReservedProxyUsd).toBeCloseTo(0.898);
+      expect(otherAccount.settle(unknownId, "gpt-6-luna", usage)).toBe(false);
+      expect(otherAccount.summary().requests).toBe(0);
+      expect(expanded.settle(unknownId, "gpt-6-luna", null)).toBe(false);
+      expect(
+        expanded.reserve("gpt-6-luna", "candidate", 1.1, "additional"),
+      ).not.toBeNull();
+      expect(expanded.summary().chargedOrReservedProxyUsd).toBeCloseTo(1.998);
+      expect(expanded.summary().estimatedPercent.high).toBeCloseTo(19.98);
+      expect(expanded.summary().unknownRequests).toBe(2);
+      // The central/high denominators cannot admit a request over the low cap.
+      expect(
+        expanded.reserve("gpt-6-luna", "candidate", 0.01, "over-cap"),
+      ).toBeNull();
+      expect(
+        expanded.reserve(
+          "gpt-6-luna",
+          "candidate",
+          0.001,
+          "expired",
+          before.window.end,
+        ),
+      ).toBeNull();
+      expect(
+        expanded.reserve(
+          "gpt-6-luna",
+          "candidate",
+          0.001,
+          "early",
+          before.window.start - 1,
+        ),
+      ).toBeNull();
+      expect(
+        accountAvailable(
+          { id: "different", quota: { weeklyPercent: 0 } },
+          expanded.config.accountId,
+          true,
+        ),
+      ).toBe(false);
+      expect(expanded.summary().requests).toBe(3);
+    } finally {
+      otherAccount.close();
+      expanded.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
   it("seeds historical thread usage exactly once even when above cap", () => {
     const ledger = new ModelBudget(":memory:", config);
