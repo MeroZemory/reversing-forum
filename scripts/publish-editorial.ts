@@ -38,7 +38,7 @@ type Bundle = {
 };
 type ReviewFile = {
   model: "gpt-6.1-sol";
-  effort: "xhigh";
+  effort: "xhigh" | "max";
   entries: {
     candidateKey: string;
     publicHash: string;
@@ -81,7 +81,7 @@ const versions = {
 };
 if (
   review.model !== "gpt-6.1-sol" ||
-  review.effort !== "xhigh" ||
+  (review.effort !== "xhigh" && review.effort !== "max") ||
   !bundle.processingRecord ||
   !existsSync(resolve(bundle.processingRecord))
 )
@@ -310,7 +310,7 @@ async function main() {
             ...target,
             review: {
               model: "sol",
-              effort: "xhigh",
+              effort: review.effort,
               referenceId: entry.reviewId,
               compared: true,
               checks: {

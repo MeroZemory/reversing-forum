@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -57,6 +58,7 @@ function run(
     bundle?: Record<string, unknown>;
     entry?: Record<string, unknown>;
     verdict?: Record<string, unknown>;
+    review?: Record<string, unknown>;
     replacePublished?: boolean;
   } = {},
 ) {
@@ -95,6 +97,7 @@ function run(
     write("review.json", {
       model: "gpt-6.1-sol",
       effort: "xhigh",
+      ...overrides.review,
       entries: [
         {
           candidateKey: "synthetic-candidate",
@@ -170,6 +173,7 @@ globalThis.fetch = async (url, options = {}) => {
 };`,
     );
     let failed = false;
+    let failure = "";
     try {
       execFileSync(
         process.execPath,
@@ -188,22 +192,26 @@ globalThis.fetch = async (url, options = {}) => {
         ],
         { cwd: root, stdio: "pipe", timeout: 20_000 },
       );
-    } catch {
+    } catch (error) {
       failed = true;
+      failure = String((error as { stderr?: unknown }).stderr ?? error);
     }
     const receiptFile = readdirSync(directory).find((name) =>
       name.startsWith("publication-"),
     );
-    expect(receiptFile).toBeTruthy();
-    const receipt = JSON.parse(
-      readFileSync(join(directory, receiptFile!), "utf8"),
-    );
-    const calls: Call[] = readFileSync(join(root, "calls.jsonl"), "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    if (!failed) expect(receiptFile).toBeTruthy();
+    const receipt = receiptFile
+      ? JSON.parse(readFileSync(join(directory, receiptFile), "utf8"))
+      : null;
+    const calls: Call[] = existsSync(join(root, "calls.jsonl"))
+      ? readFileSync(join(root, "calls.jsonl"), "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+      : [];
     return {
       failed,
+      failure,
       receipt,
       calls,
       actions: calls.map((c) => c.data?.action),
@@ -215,13 +223,64 @@ globalThis.fetch = async (url, options = {}) => {
   }
 }
 
-it("holds a changed purpose with the old share approval", () => {
-  const result = run({}, "publish", 200, {
-    entry: { publicData: { ...publicData, kind: "question" } },
-  });
-  expect(result.actions).toEqual(["basis"]);
-  expect(result.receipt).toMatchObject({ held: 1, published: 0, ingested: 0 });
+it.each(["xhigh", "max"])(
+  "transmits the actual Sol %s review effort",
+  (effort) => {
+    const result = run({ hash: "synthetic-old-hash" }, "publish", 200, {
+      review: { effort },
+    });
+    expect(result.failed).toBe(false);
+    expect(result.receipt).toMatchObject({ published: 1, held: 0, errors: 0 });
+    expect(
+      result.calls.find((call) => call.data?.action === "review")?.data,
+    ).toMatchObject({
+      hash: publicHash,
+      review: { model: "sol", effort, referenceId: "synthetic-review" },
+    });
+    expect(result.actions).toEqual([
+      "basis",
+      undefined,
+      "revise",
+      "review",
+      "approve",
+      "publish",
+      "snapshot",
+    ]);
+  },
+);
+
+it.each([
+  { effort: "high" },
+  { effort: "medium" },
+  { effort: "MAX" },
+  { effort: null },
+  { effort: undefined },
+  { model: "gpt-6.1-astra", effort: "max" },
+  { model: "sol", effort: "xhigh" },
+  { model: undefined, effort: "max" },
+])("rejects unsupported review %j before any HTTP call", (review) => {
+  const result = run({}, "publish", 200, { review });
+  expect(result.failed).toBe(true);
+  expect(result.failure).toContain("missing-processing-or-review-record");
+  expect(result.calls).toEqual([]);
+  expect(result.receipt).toBeNull();
 });
+
+it.each(["xhigh", "max"])(
+  "holds a changed purpose with the old %s share approval",
+  (effort) => {
+    const result = run({}, "publish", 200, {
+      review: { effort },
+      entry: { publicData: { ...publicData, kind: "question" } },
+    });
+    expect(result.actions).toEqual(["basis"]);
+    expect(result.receipt).toMatchObject({
+      held: 1,
+      published: 0,
+      ingested: 0,
+    });
+  },
+);
 
 it.each(["analysis", "free", "", null, undefined])(
   "holds invalid bundle purpose %s even with a matching review hash",

@@ -588,7 +588,7 @@ export async function editorialAction(key: string, value: unknown) {
         ]);
         if (
           r.model !== "sol" ||
-          r.effort !== "xhigh" ||
+          (r.effort !== "xhigh" && r.effort !== "max") ||
           r.compared !== true ||
           Object.keys(checks).length !== 4 ||
           Object.values(checks).some((v) => v !== true) ||

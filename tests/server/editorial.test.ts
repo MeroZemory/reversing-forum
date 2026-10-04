@@ -353,22 +353,71 @@ describe("editorial server gates and privacy", () => {
     ).rejects.toMatchObject({ status: 400 });
     expect(forum.listPosts()).toEqual([]);
   });
-  it("keeps draft, review alone, and approval without passing Jev private", async () => {
-    const d = await ingest();
-    await expect(action(d, "approve")).rejects.toMatchObject({ status: 409 });
-    await expect(action(d, "publish")).rejects.toMatchObject({ status: 409 });
-    const r = await action(d, "review", { review });
-    await expect(action(r, "publish")).rejects.toMatchObject({ status: 409 });
-    const a = await action(r, "approve");
-    screening.run.mockResolvedValueOnce({
-      status: "held",
-      evidence: "private",
-    });
-    expect((await action(a, "publish")).post).toBeNull();
-    await expect(action(a, "publish")).rejects.toMatchObject({ status: 409 });
-    expect(screening.run).toHaveBeenCalledTimes(1);
-    expect(forum.listPosts()).toEqual([]);
-  });
+  it.each(["xhigh", "max"])(
+    "accepts Sol %s through approval and passing publication gates",
+    async (effort) => {
+      const d = await ingest();
+      const r = await action(d, "review", { review: { ...review, effort } });
+      expect(r.reviewed).toBe(true);
+      expect(r.approved).toBe(false);
+      expect(r.hash).toBe(d.hash);
+      const a = await action(r, "approve");
+      expect(a.approved).toBe(true);
+      const p = await action(a, "publish");
+      expect(p.post?.status).toBe("published");
+      expect(screening.run).toHaveBeenCalledTimes(1);
+      expect(duplicate.run).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    { effort: "high" },
+    { effort: "medium" },
+    { effort: "MAX" },
+    { effort: null },
+    { effort: undefined },
+    { model: "astra", effort: "max" },
+    { model: "gpt-6.1-sol", effort: "xhigh" },
+    { model: undefined, effort: "max" },
+  ])(
+    "rejects unsupported review %j without mutating an approved draft",
+    async (patch) => {
+      const a = await approved();
+      const snapshot = () => ({
+        drafts: db.prepare("SELECT * FROM editorial_drafts").all(),
+        audit: db.prepare("SELECT * FROM editorial_audit").all(),
+        posts: db.prepare("SELECT * FROM posts").all(),
+      });
+      const before = snapshot();
+      await expect(
+        action(a, "review", { review: { ...review, ...patch } }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(snapshot()).toEqual(before);
+      expect(await api.getEditorial(a.candidateKey)).toEqual(a);
+      expect(screening.run).not.toHaveBeenCalled();
+      expect(duplicate.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["xhigh", "max"])(
+    "keeps draft, Sol %s review alone, and approval without passing Jev private",
+    async (effort) => {
+      const d = await ingest();
+      await expect(action(d, "approve")).rejects.toMatchObject({ status: 409 });
+      await expect(action(d, "publish")).rejects.toMatchObject({ status: 409 });
+      const r = await action(d, "review", { review: { ...review, effort } });
+      await expect(action(r, "publish")).rejects.toMatchObject({ status: 409 });
+      const a = await action(r, "approve");
+      screening.run.mockResolvedValueOnce({
+        status: "held",
+        evidence: "private",
+      });
+      expect((await action(a, "publish")).post).toBeNull();
+      await expect(action(a, "publish")).rejects.toMatchObject({ status: 409 });
+      expect(screening.run).toHaveBeenCalledTimes(1);
+      expect(forum.listPosts()).toEqual([]);
+    },
+  );
   it("bounds API errors to three attempts and never publishes them", async () => {
     const a = await approved();
     screening.run.mockRejectedValue(new Error("api failure"));
