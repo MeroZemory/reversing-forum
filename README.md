@@ -52,7 +52,7 @@ Google 콜백은 `BETTER_AUTH_URL`의 origin에 `/api/auth/callback/google`을 �
 
 Windows에서 `powershell.exe -NoProfile -File scripts/install-production-startup.ps1`을 실행하면 현재 사용자의 로그인 후 숨김 실행을 등록합니다. 이미 실행 중인 감독 프로세스가 있으면 그대로 유지합니다. 이 연결의 실행 시점은 [Windows의 로그인 후 실행 규칙](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)을 따르며, 로그온 전 부팅과 실제 재부팅 검증은 별도입니다.
 
-운영 감독 프로세스는 시작 직후와 매일 09:00 KST에 로컬 DB를 백업합니다. 실패하면 5분 뒤 재시도하며 백업 자식의 실행 시간은 10분으로 제한합니다. `node scripts/production-backup.mjs`로 수동 실행할 수도 있습니다. [SQLite 온라인 백업](https://www.sqlite.org/backup.html)을 사용하며, `data/production-backups/`의 접근 권한을 제한하고 확정된 일일 사본을 최대 7개 보관합니다. 같은 날 재실행은 기존 사본을 검증합니다. 현재 실제 일일 사본은 1개이며, 원격 보관·장비 손실 복구·실제 재부팅 검증은 남아 있습니다. [실행·격리 복구 근거](docs/progress/index.html#latest-production-backup)
+운영 감독 프로세스는 시작 직후와 매일 09:00 KST에 로컬 DB를 백업합니다. 실패하면 5분 뒤 재시도하며 백업 자식의 실행 시간은 10분으로 제한합니다. `node scripts/production-backup.mjs`로 수동 실행할 수도 있습니다. [SQLite 온라인 백업](https://www.sqlite.org/backup.html)을 사용하며, `data/production-backups/`의 접근 권한을 제한하고 확정된 일일 사본을 최대 7개 보관합니다. 같은 날 재실행은 기존 사본을 검증합니다. 현재 실제 일일 사본은 1개입니다. 원격 백업 설정과 장비 손실 복구 검증은 사용자 지시로 당분간 보류하며, 실제 재부팅 검증은 남아 있습니다. [실행·격리 복구 근거](docs/progress/index.html#latest-production-backup)
 
 ## 폴더
 
