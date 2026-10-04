@@ -16,6 +16,7 @@ const server = spawn(
   [
     "node_modules/next/dist/bin/next",
     "dev",
+    ...(process.env.FORUM_E2E_BUNDLER === "webpack" ? ["--webpack"] : []),
     "--hostname",
     "127.0.0.1",
     "--port",

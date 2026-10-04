@@ -36,7 +36,7 @@ export default defineConfig({
       BETTER_AUTH_URL: `http://127.0.0.1:${portFor(index)}`,
       SITE_URL: `http://127.0.0.1:${portFor(index)}`,
       DATABASE_PATH: resolve(`data/e2e-${runId}-${mode}.sqlite`),
-      NEXT_DIST_DIR: `.next-verification/e2e/${mode}`,
+      NEXT_DIST_DIR: `.next-verification/e2e/${runId}/${mode}`,
       NODE_PATH: resolve("node_modules"),
       JEV_MOCK: mode,
       DUPLICATE_MOCK: "distinct",
