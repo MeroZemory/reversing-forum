@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
 import {
   mkdtempSync,
@@ -8,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  realpathSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -260,6 +262,79 @@ afterEach(() => {
 });
 
 describe("local semantic duplicate fallback", () => {
+  it.each([true, false])(
+    "disables HTTP and stdio MCP transports without mixing pinned-home=%s transport config",
+    async (pinnedHome) => {
+      const home = realpathSync(join(root, "home"));
+      writeFileSync(
+        join(home, "config.toml"),
+        'model_provider="synthetic-proxy"\n' +
+          '[model_providers.synthetic-proxy]\nbase_url="http://127.0.0.1:10100/v1"\nrequires_openai_auth=true\nexperimental_bearer_token="synthetic-transport-secret"\n' +
+          '[mcp_servers.docs]\nurl="http://127.0.0.1:10101/unused"\n' +
+          '[mcp_servers.stdio]\ncommand="synthetic-command-never-run"\n',
+      );
+      if (pinnedHome) {
+        writeFileSync(
+          join(home, "auth.json"),
+          JSON.stringify({
+            auth_mode: "chatgpt",
+            tokens: { account_id: "synthetic-pinned-account" },
+          }),
+        );
+        writeFileSync(
+          join(root, "data/chat-pipeline/model-budget.json"),
+          JSON.stringify({
+            ...config,
+            allowCreditUsage: true,
+            codexHome: home,
+            codexAccountFingerprint: createHash("sha256")
+              .update("synthetic-pinned-account")
+              .digest("hex"),
+          }),
+        );
+      }
+      expect((await judgeWithLlm(input)).verdict).toBe("duplicate");
+      const args = mocked.spawn.mock.calls[0][1] as string[];
+      for (const name of ["docs", "stdio", "project"]) {
+        expect(args).toContain(`mcp_servers.${name}.enabled=false`);
+        if (pinnedHome)
+          expect(args).not.toContain(
+            `mcp_servers.${name}.command="duplicate-tools-disabled"`,
+          );
+        else
+          expect(args).toContain(
+            `mcp_servers.${name}.command="duplicate-tools-disabled"`,
+          );
+      }
+      expect(args.includes("--ignore-user-config")).toBe(!pinnedHome);
+      expect(
+        args[args.indexOf("features.api_key_model_discovery=false") - 1],
+      ).toBe("-c");
+      expect(args).toContain("--ignore-rules");
+      expect(args).toContain('web_search="disabled"');
+      expect(args).toContain('approval_policy="never"');
+      expect(args.join(" ")).not.toMatch(
+        /synthetic-transport-secret|base_url|experimental_bearer_token/,
+      );
+      const options = mocked.spawn.mock.calls[0][2];
+      expect(options.env.CODEX_HOME).toBe(
+        pinnedHome ? home : join(root, "home"),
+      );
+      expect(options.env.OPENAI_API_KEY).toBeUndefined();
+      expect(options.env.TYPESAFE_API_KEY).toBeUndefined();
+      expect(summary().unknownRequests).toBe(0);
+      const r = receipt();
+      expect(r.value.settled).toBe(true);
+      const catalog = JSON.parse(
+        readFileSync(join(r.directory, "model-catalog.json"), "utf8"),
+      );
+      expect(catalog.models[0]).toMatchObject({
+        tool_mode: "direct",
+        experimental_supported_tools: [],
+      });
+    },
+  );
+
   it("pins independent review to Sol/medium and uses Sol reserve and settlement weights", async () => {
     const reserve = vi.spyOn(ModelBudget.prototype, "reserve");
     const settle = vi.spyOn(ModelBudget.prototype, "settle");
@@ -385,6 +460,9 @@ describe("local semantic duplicate fallback", () => {
     expect(args).toContain("features.code_mode=false");
     expect(args).toContain("features.code_mode_host=false");
     expect(args).toContain("features.code_mode_only=false");
+    expect(
+      args[args.indexOf("features.api_key_model_discovery=false") - 1],
+    ).toBe("-c");
     expect(args).toContain("--ignore-user-config");
     expect(args).toContain("--ignore-rules");
     expect(args).toContain("mcp_servers={}");

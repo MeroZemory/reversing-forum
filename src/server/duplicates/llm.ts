@@ -297,6 +297,7 @@ function validate(value: unknown, s: Snapshot): Verdict | null {
 async function mcpOverrides(
   directory: string,
   env: NodeJS.ProcessEnv,
+  pinnedHome: boolean,
 ): Promise<string[]> {
   const paths = new Set([
     join(
@@ -327,11 +328,12 @@ async function mcpOverrides(
   }
   if ([...names].some((n) => !/^[A-Za-z0-9_-]+$/.test(n)))
     throw new Error("mcp-name");
-  // Give discovered disabled entries a valid,
-  // inert transport so CLI validation cannot mistake them for incomplete servers.
+  // Loaded transports stay intact in pinned mode; excluded legacy config needs
+  // an inert transport for disabled entries to remain valid.
   return [...names].flatMap((n) => [
-    "-c",
-    `mcp_servers.${n}.command="duplicate-tools-disabled"`,
+    ...(pinnedHome
+      ? []
+      : ["-c", `mcp_servers.${n}.command="duplicate-tools-disabled"`]),
     "-c",
     `mcp_servers.${n}.enabled=false`,
   ]);
@@ -730,7 +732,7 @@ export async function judgeWithLlm(
     )
       return uncertain();
     const pinnedHome = await cliAccountUsesPinnedHome(config, env);
-    const overrides = await mcpOverrides(directory, env);
+    const overrides = await mcpOverrides(directory, env, pinnedHome);
     receipt.stage = "catalog";
     const catalog = await isolatedCatalog(codex, directory, env, model, effort);
     // Conservative static envelope estimate; this padding is never model input.
@@ -876,6 +878,8 @@ export async function judgeWithLlm(
         "features.code_mode_host=false",
         "-c",
         "features.code_mode_only=false",
+        "-c",
+        "features.api_key_model_discovery=false",
         "-c",
         `model_catalog_json=${JSON.stringify(catalog.path)}`,
         "-c",
