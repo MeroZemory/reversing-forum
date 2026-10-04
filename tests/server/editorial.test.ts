@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   afterAll,
   beforeAll,
@@ -505,8 +506,55 @@ describe("publication transactions and invalidation", () => {
     expect(restored.post?.status).toBe("published");
     expect(screening.run).toHaveBeenCalledTimes(2);
   });
+  it("requires a fresh review after a purpose change and publishes the reviewed question", async () => {
+    const shared = await approved();
+    const changed = input("candidate-1", 2);
+    changed.publicData.kind = "question";
+    const question = await action(shared, "revise", { draft: changed });
+    expect(question.publicData.kind).toBe("question");
+    expect(question.hash).not.toBe(shared.hash);
+    await expect(action(shared, "publish")).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(action(question, "publish")).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(screening.run).not.toHaveBeenCalled();
+    const reviewed = await action(question, "review", { review });
+    const approvedQuestion = await action(reviewed, "approve");
+    const published = await action(approvedQuestion, "publish");
+    expect(forum.getPost(published.post!.id)?.kind).toBe("question");
+    expect(
+      forum.listPostPage({ purpose: "question" }).posts.map((post) => post.id),
+    ).toEqual([published.post!.id]);
+    expect(JSON.parse(screening.run.mock.calls[0][0])).toEqual(
+      changed.publicData,
+    );
+  });
+  it.each(["analysis", "free", "", null, undefined])(
+    "rejects invalid public purpose %s before storing or screening",
+    async (kind) => {
+      const data = input();
+      await expect(
+        api.editorialCollectionAction({
+          action: "ingest",
+          ...data,
+          publicData: { ...data.publicData, kind },
+        }),
+      ).rejects.toMatchObject({ status: 400 });
+      expect(
+        db.prepare("SELECT count(*) n FROM editorial_drafts").get(),
+      ).toEqual({ n: 0 });
+      expect(screening.run).not.toHaveBeenCalled();
+    },
+  );
   it("publishes exactly the complete public data and returns the same post after response loss", async () => {
     const a = await approved();
+    expect(a.hash).toBe(
+      createHash("sha256")
+        .update(JSON.stringify(input().publicData))
+        .digest("hex"),
+    );
     const p = await action(a, "publish");
     expect(p.post?.status).toBe("published");
     await expect(action(p, "review", { review })).rejects.toMatchObject({

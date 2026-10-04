@@ -370,7 +370,7 @@ export async function runCorpus(
   const directory = join(root, "data/chat-pipeline");
   const schemaDirectory = join(directory, "schemas");
   mkdirSync(schemaDirectory, { recursive: true });
-  for (const mode of ["candidate", "draft", "review"]) {
+  for (const mode of ["candidate", "draft", "draft-purpose", "review"]) {
     const local = join(schemaDirectory, `${mode}.schema.json`);
     const current = readFileSync(
       join(root, "src/server/chat-pipeline/schemas", `${mode}.schema.json`),
@@ -630,7 +630,11 @@ export async function runCorpus(
     allowCandidateSubset = false,
   ) => {
     const source = read(input);
-    const schema = join(directory, "schemas", `${mode}.schema.json`);
+    const schemaMode =
+      mode === "draft" && source.draftSchema === "draft-purpose"
+        ? "draft-purpose"
+        : mode;
+    const schema = join(directory, "schemas", `${schemaMode}.schema.json`);
     const emptyReview =
       mode === "review" &&
       Array.isArray(source.entries) &&

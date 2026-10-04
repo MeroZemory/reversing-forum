@@ -12,7 +12,7 @@ const directory = resolve("data/chat-pipeline");
 type PublicData = {
   title: string;
   body: string;
-  kind: "share";
+  kind: "question" | "share";
   tags: string[];
   provenance: {
     type: "chat-editorial" | "independent-guide";
@@ -180,6 +180,8 @@ async function main() {
       verdict.qualityPolicyVersion !== qualityPolicyVersion ||
       verdict.quality !== true ||
       entry.needsContext !== false ||
+      (entry.publicData.kind !== "question" &&
+        entry.publicData.kind !== "share") ||
       verdict.meaning !== true ||
       verdict.privacy !== true ||
       verdict.rights !== true ||

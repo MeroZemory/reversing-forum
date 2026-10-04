@@ -38,7 +38,7 @@ function fixture(count = 3) {
   const root = mkdtempSync(join(tmpdir(), "corpus-run-"));
   roots.push(root);
   const directory = join(root, "data/chat-pipeline");
-  for (const mode of ["candidate", "draft", "review"]) {
+  for (const mode of ["candidate", "draft", "draft-purpose", "review"]) {
     write(
       join(root, "src/server/chat-pipeline/schemas", `${mode}.schema.json`),
       read(resolve("src/server/chat-pipeline/schemas", `${mode}.schema.json`)),
@@ -97,6 +97,110 @@ it("rejects a stale quality-policy enum before a cached output can be reused", (
     "unsupported-output-schema",
   );
 });
+
+it.each([
+  { purpose: false, cached: true, kind: undefined, valid: true },
+  { purpose: true, cached: true, kind: "question", valid: true },
+  { purpose: true, cached: true, kind: "share", valid: true },
+  { purpose: true, cached: false, kind: "question", valid: true },
+  { purpose: true, cached: false, kind: "share", valid: true },
+  { purpose: true, cached: true, kind: undefined, valid: false },
+  { purpose: true, cached: false, kind: undefined, valid: false },
+  { purpose: true, cached: true, kind: "other", valid: false },
+])(
+  "routes draft contract and reuses cache unchanged: %j",
+  async ({ purpose, cached, kind, valid }) => {
+    const { root, directory } = fixture(1);
+    const input = join(
+      directory,
+      "editorial-batches",
+      `${id(1)}.draft.input.json`,
+    );
+    const output = input.replace(".input.json", ".output.json");
+    const reviewInput = input.replace(".draft.", ".review.");
+    const reviewOutput = reviewInput.replace(".input.json", ".output.json");
+    const bundle = input.replace(".draft.input.json", ".bundle.json");
+    const approved = input.replace(".draft.input.json", ".approved.json");
+    write(input, {
+      ...(purpose ? { draftSchema: "draft-purpose" } : {}),
+      entries: [{ candidateKey: id(4) }],
+    });
+    const draft = {
+      complete: true,
+      entries: [
+        {
+          candidateKey: id(4),
+          title: "Synthetic",
+          body: "Synthetic",
+          ...(kind === undefined ? {} : { kind }),
+          tags: [],
+          ready: true,
+          quality: true,
+          reasons: [],
+        },
+      ],
+    };
+    if (cached) write(output, draft);
+    const original = cached ? readFileSync(output) : undefined;
+    const calls: Launch[] = [];
+    const runner: Runner = async (launch) => {
+      calls.push(launch);
+      const { script, args } = command(launch);
+      if (script === "chat-codex-run.ts") {
+        expect(args[0]).toBe("draft");
+        expect(basename(args[3])).toBe(
+          purpose ? "draft-purpose.schema.json" : "draft.schema.json",
+        );
+        write(args[2], draft);
+      } else if (script === "chat-editorial-batches.ts") {
+        if (args[0] === "prepare") {
+          write(join(directory, "editorial-batches/manifest.json"), {
+            packets: [{ packetId: id(1), input, output }],
+          });
+        } else if (args[0] === "review") {
+          write(reviewInput, { entries: [], draftHeld: [] });
+          return {
+            code: 0,
+            stdout: JSON.stringify({ reviewInput, reviewOutput }),
+          };
+        } else if (args[0] === "bundle") {
+          write(bundle, { entries: [] });
+          write(approved, { entries: [] });
+          return {
+            code: 0,
+            stdout: JSON.stringify({ bundle, review: approved, held: 0 }),
+          };
+        }
+      } else throw new Error("unexpected helper");
+      return { code: 0 };
+    };
+    const options = { root, phase: "draft" as const, concurrency: 1 };
+    const first = await runCorpus(options, runner);
+    expect(first.code).toBe(valid ? 0 : 1);
+    expect(
+      calls.filter((c) => command(c).script === "chat-codex-run.ts"),
+    ).toHaveLength(cached ? 0 : 1);
+    if (original) expect(readFileSync(output)).toEqual(original);
+    if (!valid) {
+      expect(first.progress.failures?.at(-1)?.errorCode).toBe(
+        "invalid-existing-output",
+      );
+      expect(calls.some((c) => command(c).args[0] === "review")).toBe(false);
+      return;
+    }
+    const steps = structuredClone(first.progress.steps);
+    const bytes = readFileSync(output);
+    calls.length = 0;
+    const resumed = await runCorpus(options, runner);
+    expect(resumed.code).toBe(0);
+    expect(resumed.progress.steps).toEqual(steps);
+    expect(readFileSync(output)).toEqual(bytes);
+    expect(calls.some((c) => command(c).script === "chat-codex-run.ts")).toBe(
+      false,
+    );
+  },
+);
+
 describe("optional candidate shard routing", () => {
   it("parses 1..6 blocks and rejects invalid values without changing defaults", () => {
     expect(parseOptions(["candidate"]).candidateShardBlocks).toBeUndefined();

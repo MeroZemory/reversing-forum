@@ -14,7 +14,7 @@ type Versions = {
 type PublicData = {
   title: string;
   body: string;
-  kind: "share";
+  kind: "question" | "share";
   tags: string[];
   provenance: {
     type: "chat-editorial" | "independent-guide";
@@ -133,7 +133,7 @@ function draftInput(value: unknown): DraftInput {
     "verificationSummary",
   ]);
   if (
-    p.kind !== "share" ||
+    (p.kind !== "question" && p.kind !== "share") ||
     !["chat-editorial", "independent-guide"].includes(provenance.type as string)
   )
     throw new ForumError(400, "출처와 글 종류를 확인해 주세요.");
@@ -157,7 +157,7 @@ function draftInput(value: unknown): DraftInput {
     publicData: {
       title: text(p.title, 160, 2),
       body: text(p.body, 30_000, 10),
-      kind: "share",
+      kind: p.kind,
       tags: strings(p.tags, 5, (v) => text(v, 24)),
       provenance: {
         type: provenance.type as PublicData["provenance"]["type"],
@@ -705,7 +705,7 @@ async function publish(key: string, data: Record<string, unknown>, user: User) {
       const id = old?.id ?? randomUUID();
       const p = d.publicData;
       // The public editorial contract uses purpose; legacy post storage uses kind.
-      const storedKind = "analysis";
+      const storedKind = p.kind === "question" ? "question" : "analysis";
       if (old) {
         db.prepare(
           "UPDATE posts SET title=?,body=?,kind=?,tags=?,status='published',screening_evidence=NULL WHERE id=?",

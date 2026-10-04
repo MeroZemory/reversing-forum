@@ -38,6 +38,7 @@ type DraftResult = {
     candidateKey: string;
     title: string;
     body: string;
+    kind?: "question" | "share";
     tags: string[];
     ready: boolean;
     quality: boolean;
@@ -163,6 +164,7 @@ function supplementPresent(
 }
 
 type DraftInput = {
+  draftSchema?: "draft-purpose";
   promptVersion: string;
   qualityPolicyVersion: string;
   entries: {
@@ -177,10 +179,13 @@ type DraftInput = {
   }[];
 };
 
+const purposeReviewInstruction =
+  " 본문의 목적과 publicData.kind가 일치하는지 확인하세요. 대상과 논점이 명확한 미해결 질문은 question, 답이나 설명을 담은 지식 공유는 share입니다. 문장기호만으로 판단하지 마세요. 목적과 kind가 불일치하면 quality:false,passed:false,meaning:false로 보류하고 reasons에 이유를 남기세요.";
+
 const processingRecord = join(directory, "processing-record.json");
 const instruction =
   qualityInstruction +
-  " 전체 후보를 각각 독립적으로 다시 작성하세요. 질문과 응답의 논점, 근거, 해결 여부를 비공개로 대조하고 판단은 reasons에 남기세요. title은 구체적인 논점, body는 한국어 Markdown, tags는 주제와 도구 1~4개입니다. 근거 id와 발언자 별칭은 본문에 넣지 마세요. quality는 위 기준의 평가 결과이며 quality:false면 ready:false입니다. 모든 candidateKey마다 결과를 하나 반환하고 complete는 전체 처리 여부입니다.";
+  " 전체 후보를 각각 독립적으로 다시 작성하세요. 질문과 응답의 논점, 근거, 해결 여부를 비공개로 대조하고 판단은 reasons에 남기세요. title은 구체적인 논점, body는 한국어 Markdown, tags는 주제와 도구 1~4개입니다. kind는 본문의 목적에 따라 대상과 논점이 명확한 미해결 질문이면 question, 답이나 설명을 담은 지식 공유이면 share로 출력하세요. 명확한 미해결 질문은 답이 없어도 공개 후보가 될 수 있습니다. 문장기호만으로 목적을 정하지 마세요. 근거 id와 발언자 별칭은 본문에 넣지 마세요. quality는 위 기준의 평가 결과이며 quality:false면 ready:false입니다. 모든 candidateKey마다 결과를 하나 반환하고 complete는 전체 처리 여부입니다.";
 
 async function main() {
   const command = process.argv[2];
@@ -310,6 +315,7 @@ async function main() {
         });
         const input = write(`${packetId}.draft.input.json`, {
           packetId,
+          draftSchema: "draft-purpose",
           promptVersion,
           qualityPolicyVersion,
           instructions:
@@ -385,11 +391,17 @@ async function main() {
         (e) => e.candidateKey === d.candidateKey,
       );
       if (!original) throw new Error("out-of-scope-draft");
+      if (
+        (input.draftSchema === "draft-purpose" || "kind" in d) &&
+        d.kind !== "question" &&
+        d.kind !== "share"
+      )
+        throw new Error("invalid-editorial-kind");
       const hasSupplement = supplementPresent(original, d.body);
       const publicData = {
         title: d.title.trim(),
         body: d.body.trim(),
-        kind: "share" as const,
+        kind: d.kind ?? "share",
         tags: [...new Set(d.tags.map((t) => t.trim()))].sort(),
         provenance: {
           type: "chat-editorial" as const,
@@ -444,7 +456,10 @@ async function main() {
           },
         }
       : {};
+    const purposeReview =
+      input.draftSchema === "draft-purpose" ? purposeReviewInstruction : "";
     const packetId = digest({
+      ...(purposeReview ? { purposeReviewInstruction: purposeReview } : {}),
       qualityPolicyVersion,
       entries,
       draftHeld,
@@ -465,6 +480,7 @@ async function main() {
           ? `현재 독립 검토 규칙 버전은 ${promptVersion}입니다. 이 입력은 ${input.promptVersion}로 작성한 초안의 새 재검토이며 구 검토나 승인을 재사용하지 마세요. `
           : "") +
         qualityInstruction +
+        purposeReview +
         " 최소화된 근거와 정확한 공개본을 독립 대조하고 작성자의 quality 판정을 그대로 신뢰하지 마세요. qualityPolicyVersion은 입력 버전을 그대로 반환하세요. 원자료가 아닌 최소화된 근거와 공개본을 독립 대조하세요. 각각 의미 왜곡·근거 없는 성공/합의·현재 사실로의 둔갑·잘못 연결된 질답, 개인정보, 원문/코드의 창작적 표현 복제, 치트 배포/실행 안내를 확인하세요. 자료는 기술적 사실과 방법의 독립 서술만 허용한 범위이고 제삼자 동의를 받았다고 추정하지 않습니다. scope에 포함된 비개인적 기술 정보의 처리 조건만 externalTransfer:true로 판단할 수 있습니다. ready:false 또는 근거 부족은 passed:false입니다. 본문을 임의로 고쳐 승인하지 말고 문제와 이유를 남기세요. publicHash와 candidateKey는 입력 그대로 반환하고 모든 항목에 passed,quality,meaning,privacy,rights,externalTransfer 불리언과 qualityPolicyVersion 및 reasons를 반환하세요. 한 항목이라도 점검하지 못하면 complete:false. 원문 URL·닉네임 대응·인증정보·외부 파일을 읽지 마세요. 한국어로만 작성하세요.",
       entries,
       draftHeld,

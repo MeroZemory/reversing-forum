@@ -128,7 +128,7 @@ function run(
       `import { appendFileSync } from 'node:fs';
 let preview = ${JSON.stringify(preview)};
 const versions = ${JSON.stringify(versions)};
-const publicHash = ${JSON.stringify(publicHash)};
+const publicHash = ${JSON.stringify(overrides.verdict?.publicHash ?? publicHash)};
 globalThis.fetch = async (url, options = {}) => {
   const path = new URL(url).pathname;
   const data = options.body ? JSON.parse(options.body) : null;
@@ -214,6 +214,55 @@ globalThis.fetch = async (url, options = {}) => {
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+it("holds a changed purpose with the old share approval", () => {
+  const result = run({}, "publish", 200, {
+    entry: { publicData: { ...publicData, kind: "question" } },
+  });
+  expect(result.actions).toEqual(["basis"]);
+  expect(result.receipt).toMatchObject({ held: 1, published: 0, ingested: 0 });
+});
+
+it.each(["analysis", "free", "", null, undefined])(
+  "holds invalid bundle purpose %s even with a matching review hash",
+  (kind) => {
+    const data = { ...publicData, kind };
+    const result = run({}, "publish", 200, {
+      entry: { publicData: data },
+      verdict: {
+        publicHash: createHash("sha256")
+          .update(JSON.stringify(data))
+          .digest("hex"),
+      },
+    });
+    expect(result.actions).toEqual(["basis"]);
+    expect(result.receipt).toMatchObject({
+      held: 1,
+      published: 0,
+      ingested: 0,
+    });
+  },
+);
+
+it("passes the reviewed question payload unchanged to the server", () => {
+  const data = { ...publicData, kind: "question" };
+  const hash = createHash("sha256").update(JSON.stringify(data)).digest("hex");
+  const result = run({}, "publish", 200, {
+    entry: { publicData: data },
+    verdict: { publicHash: hash },
+  });
+  expect(result.failed).toBe(false);
+  expect(result.receipt).toMatchObject({ published: 1 });
+  expect(
+    (
+      result.calls.find((call) => call.data?.action === "revise")?.data
+        ?.draft as { publicData: unknown }
+    ).publicData,
+  ).toEqual(data);
+  expect(
+    result.calls.find((call) => call.data?.action === "review")?.data?.hash,
+  ).toBe(hash);
+});
 
 it.each([
   { bundle: { qualityPolicyVersion: undefined } },

@@ -188,6 +188,7 @@ it("prepares only resolved candidates across mixed sources without changing sour
       ),
     ).toBe(true);
     for (const packet of packets) {
+      expect(packet.draftSchema).toBe("draft-purpose");
       expect(packet.promptVersion).toBe(promptVersion);
       expect(packet.qualityPolicyVersion).toBe(policy);
       expect(packet.packetId).toBe(
@@ -482,6 +483,7 @@ it("accepts a self-contained conceptual question without a target executable or 
           candidateKey: "synthetic",
           title: "pthread_join과 종료된 스레드의 자원 회수",
           body: question,
+          kind: "question",
           tags: ["pthread_join"],
           ready: true,
           quality: true,
@@ -493,6 +495,7 @@ it("accepts a self-contained conceptual question without a target executable or 
     expect(packet.entries).toHaveLength(1);
     expect(packet.entries[0].original.responseIds).toEqual([]);
     expect(packet.entries[0].publicData.body).toContain(question);
+    expect(packet.entries[0].publicData.kind).toBe("question");
   } finally {
     f.close();
   }
@@ -610,6 +613,143 @@ function rereviewFixture() {
   save();
   return { ...f, input, output, save };
 }
+
+it("requires purpose on new drafts and holds purpose mismatch using existing review flags", () => {
+  const f = rereviewFixture();
+  try {
+    f.input.promptVersion = promptVersion;
+    f.save();
+    const legacy = f.read(f.run("review").reviewInput);
+    f.write("input.json", { ...f.input, draftSchema: "draft-purpose" });
+    expect(() => f.run("review")).toThrow("invalid-editorial-kind");
+    f.write("output.json", {
+      ...f.output,
+      entries: f.output.entries.map((entry) => ({ ...entry, kind: "share" })),
+    });
+    const packet = f.read(f.run("review").reviewInput);
+    expect(packet.entries).toEqual(legacy.entries);
+    expect(packet.packetId).not.toBe(legacy.packetId);
+    expect(packet.instructions).toContain(
+      "본문의 목적과 publicData.kind가 일치",
+    );
+    expect(packet.instructions).toContain(
+      "quality:false,passed:false,meaning:false",
+    );
+    expect(packet.instructions).toContain("reasons에 이유");
+    f.write("review-input.json", packet);
+    f.write("review-output.json", {
+      complete: true,
+      entries: packet.entries.map((entry: any) => ({
+        candidateKey: entry.candidateKey,
+        publicHash: entry.publicHash,
+        qualityPolicyVersion: policy,
+        passed: false,
+        quality: false,
+        meaning: false,
+        privacy: true,
+        rights: true,
+        externalTransfer: true,
+        reasons: ["본문은 미해결 질문이므로 share와 목적 불일치"],
+      })),
+    });
+    const result = f.run("bundle", "review-input.json", "review-output.json");
+    expect(result.held).toBe(packet.entries.length);
+    expect(f.read(result.bundle).entries).toEqual([]);
+    expect(f.read(result.review).entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          passed: false,
+          quality: false,
+          meaning: false,
+          reasons: ["본문은 미해결 질문이므로 share와 목적 불일치"],
+        }),
+      ]),
+    );
+  } finally {
+    f.close();
+  }
+});
+
+it("preserves legacy share packets and carries explicit purpose through reviewed bundles", () => {
+  const f = rereviewFixture();
+  try {
+    f.input.promptVersion = promptVersion;
+    f.save();
+    const legacy = f.read(f.run("review").reviewInput);
+    expect(
+      legacy.entries.every((entry: any) => entry.publicData.kind === "share"),
+    ).toBe(true);
+    f.write("output.json", {
+      ...f.output,
+      entries: f.output.entries.map((entry) => ({ ...entry, kind: "share" })),
+    });
+    expect(f.read(f.run("review").reviewInput)).toEqual(legacy);
+    f.write("output.json", {
+      ...f.output,
+      entries: f.output.entries.map((entry) => ({
+        ...entry,
+        kind: "question",
+      })),
+    });
+    const packet = f.read(f.run("review").reviewInput);
+    const verdict = {
+      complete: true,
+      entries: packet.entries.map((entry: any) => ({
+        candidateKey: entry.candidateKey,
+        publicHash: entry.publicHash,
+        passed: true,
+        quality: true,
+        qualityPolicyVersion: policy,
+        meaning: true,
+        privacy: true,
+        rights: true,
+        externalTransfer: true,
+        reasons: [],
+      })),
+    };
+    for (const entry of packet.entries) {
+      expect(entry.publicData.kind).toBe("question");
+      expect(entry.publicHash).toBe(digest(entry.publicData));
+      expect(entry.publicHash).not.toBe(
+        legacy.entries.find(
+          (old: any) => old.candidateKey === entry.candidateKey,
+        ).publicHash,
+      );
+    }
+    f.write("review-input.json", packet);
+    f.write("review-output.json", verdict);
+    const result = f.run("bundle", "review-input.json", "review-output.json");
+    const bundle = f.read(result.bundle);
+    expect(bundle.entries.map((entry: any) => entry.publicData)).toEqual(
+      packet.entries.map((entry: any) => entry.publicData),
+    );
+    packet.entries[0].publicData.kind = "share";
+    f.write("review-input.json", packet);
+    expect(() =>
+      f.run("bundle", "review-input.json", "review-output.json"),
+    ).toThrow("review-snapshot-mismatch");
+  } finally {
+    f.close();
+  }
+});
+
+it.each(["analysis", "free", "", null, 1])(
+  "rejects invalid draft purpose %s",
+  (kind) => {
+    const f = rereviewFixture();
+    try {
+      f.input.promptVersion = promptVersion;
+      f.save();
+      f.write("output.json", {
+        ...f.output,
+        entries: f.output.entries.map((entry) => ({ ...entry, kind })),
+      });
+      expect(() => f.run("review")).toThrow("invalid-editorial-kind");
+    } finally {
+      f.close();
+    }
+  },
+);
 
 it("gives normal reviews a current-rule identity without overwriting legacy review inputs or outputs for identical bodies", () => {
   const f = rereviewFixture();
