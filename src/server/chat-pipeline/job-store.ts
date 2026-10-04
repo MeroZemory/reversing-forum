@@ -211,10 +211,18 @@ export class ChatJobStore {
   listCandidates() {
     return this.collectCandidates();
   }
-  private collectCandidates(importedBatches?: ReadonlySet<string>) {
+  private collectCandidates(
+    importedBatches?: ReadonlySet<string>,
+    recoveryHistory = this.recoveryRows(),
+    batchScopedHistory = false,
+    selectedBatchId?: string,
+  ) {
     const grouped = new Map<string, BatchCandidate>();
     const sourceBatches = new Map<string, Set<string>>();
-    const recoveries = this.recoveryRows()
+    const candidateKeys = new Map<string, string>();
+    const reviewKey = (batchId: string, id: string) =>
+      batchScopedHistory ? JSON.stringify([batchId, id]) : id;
+    const recoveries = recoveryHistory
       .filter((row) => !importedBatches || importedBatches.has(row.batch_id))
       .map((row) => ({
         ...row,
@@ -228,7 +236,7 @@ export class ChatJobStore {
     const latestTargetReview = new Map<string, string>();
     for (const recovery of recoveries)
       for (const id of recovery.result.targetIds)
-        latestTargetReview.set(id, recovery.id);
+        latestTargetReview.set(reviewKey(recovery.batch_id, id), recovery.id);
     const contributions = new Map<
       string,
       Array<{
@@ -239,29 +247,39 @@ export class ChatJobStore {
         ambiguous: boolean;
       }>
     >();
-    for (const row of this.db
+    const rows = this.db
       .prepare(
-        `SELECT l.candidate_key,l.record,l.batch_id,o.hash AS output_hash,o.record AS source,NULL AS recovery_id,0 AS origin,l.rowid AS position FROM candidate_links l JOIN jobs j ON j.id=l.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=j.run_id WHERE r.active=1
-         UNION ALL SELECT l.candidate_key,l.record,c.batch_id,c.output_hash,c.record,c.id,1 AS origin,l.rowid AS position FROM context_recovery_links l JOIN context_recoveries c ON c.id=l.recovery_id JOIN runs r ON r.id=c.run_id WHERE r.active=1 ORDER BY origin,position`,
+        `SELECT l.candidate_key,l.record,l.batch_id,o.hash AS output_hash,o.record AS source,NULL AS recovery_id,0 AS origin,l.rowid AS position FROM candidate_links l JOIN jobs j ON j.id=l.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=j.run_id WHERE r.active=1 AND j.output_hash=o.hash${
+          selectedBatchId ? " AND l.batch_id=?" : ""
+        }
+         UNION ALL SELECT l.candidate_key,l.record,c.batch_id,c.output_hash,c.record,c.id,1 AS origin,l.rowid AS position FROM context_recovery_links l JOIN context_recoveries c ON c.id=l.recovery_id JOIN jobs j ON j.id=c.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=c.run_id WHERE r.active=1 AND j.output_hash=o.hash AND json_extract(c.input,'$.blocks[0].outputHash')=o.hash AND json_extract(c.input,'$.blocks[0].inputHash')=j.input_hash${selectedBatchId ? " AND c.batch_id=?" : ""} ORDER BY origin,position`,
       )
-      .all() as Array<{
+      .all(
+        ...(selectedBatchId ? [selectedBatchId, selectedBatchId] : []),
+      ) as Array<{
       candidate_key: string;
       record: string;
       batch_id: string;
       output_hash: string;
       source: string;
       recovery_id: string | null;
-    }>) {
+    }>;
+    for (const row of rows) {
       if (importedBatches && !importedBatches.has(row.batch_id)) continue;
-      const sources = sourceBatches.get(row.candidate_key) ?? new Set<string>();
-      sources.add(row.batch_id);
-      sourceBatches.set(row.candidate_key, sources);
+      if (row.recovery_id && !recoveryById.has(row.recovery_id)) continue;
       const next = JSON.parse(row.record) as BatchCandidate;
       const source = JSON.parse(row.source) as {
         output: BatchOutput;
         linked?: Array<{ localId: string; ambiguous: boolean }>;
       };
-      const parts = contributions.get(row.candidate_key) ?? [];
+      const key = batchScopedHistory
+        ? JSON.stringify([row.batch_id, row.candidate_key])
+        : row.candidate_key;
+      candidateKeys.set(key, row.candidate_key);
+      const sources = sourceBatches.get(key) ?? new Set<string>();
+      sources.add(row.batch_id);
+      sourceBatches.set(key, sources);
+      const parts = contributions.get(key) ?? [];
       parts.push({
         record: next,
         batchId: row.batch_id,
@@ -276,10 +294,10 @@ export class ChatJobStore {
             !source.output.candidates.find((c) => c.localId === next.localId)
               ?.needsContext),
       });
-      contributions.set(row.candidate_key, parts);
-      const previous = grouped.get(row.candidate_key);
+      contributions.set(key, parts);
+      const previous = grouped.get(key);
       grouped.set(
-        row.candidate_key,
+        key,
         previous
           ? {
               ...previous,
@@ -325,22 +343,27 @@ export class ChatJobStore {
       // Neighbors are evidence only; they never silently resolve target decisions.
       const needsContext =
         remaining.some((p) => p.record.needsContext) ||
-        [...record.questionIds, ...record.responseIds].some((id) => {
-          const review = latestTargetReview.get(id);
-          return (
-            review !== undefined &&
-            !complete.some(
-              (p) =>
-                p.recoveryId === review &&
-                [...p.record.questionIds, ...p.record.responseIds].includes(id),
-            )
-          );
-        });
+        (!batchScopedHistory &&
+          [...record.questionIds, ...record.responseIds].some((id) => {
+            const review = latestTargetReview.get(
+              reviewKey([...sourceBatches.get(candidateKey)!][0], id),
+            );
+            return (
+              review !== undefined &&
+              !complete.some(
+                (p) =>
+                  p.recoveryId === review &&
+                  [...p.record.questionIds, ...p.record.responseIds].includes(
+                    id,
+                  ),
+              )
+            );
+          }));
       const metadata = !needsContext
         ? complete.findLast((p) => covers(p.record, record))?.record
         : undefined;
       return {
-        candidateKey,
+        candidateKey: candidateKeys.get(candidateKey)!,
         ...record,
         ...(metadata ? { title: metadata.title, topic: metadata.topic } : {}),
         uncertainties: metadata
@@ -354,7 +377,7 @@ export class ChatJobStore {
   private recoveryRows() {
     return this.db
       .prepare(
-        "SELECT c.* FROM context_recoveries c JOIN runs r ON r.id=c.run_id WHERE r.active=1 ORDER BY c.rowid",
+        "SELECT c.* FROM context_recoveries c JOIN jobs j ON j.id=c.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=c.run_id WHERE r.active=1 AND j.state='ready' AND j.output_hash=o.hash AND json_extract(c.input,'$.blocks[0].outputHash')=o.hash AND json_extract(c.input,'$.blocks[0].inputHash')=j.input_hash ORDER BY c.rowid",
       )
       .all() as Array<{
       id: string;
@@ -403,17 +426,39 @@ export class ChatJobStore {
           .all() as Array<{ message_id: string }>
       ).map((r) => r.message_id),
     );
-    const originals = this.db
+    // Candidate links establish evidence membership, independent of the packet's
+    // decision history. A linkless review may reopen evidence owned elsewhere.
+    const candidateSources = this.db
       .prepare(
-        "SELECT l.record FROM candidate_links l JOIN jobs j ON j.id=l.batch_id JOIN runs r ON r.id=j.run_id WHERE r.active=1",
+        `SELECT l.candidate_key,l.record,NULL AS recovery_id FROM candidate_links l JOIN jobs j ON j.id=l.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=j.run_id WHERE r.active=1 AND j.state='ready' AND j.output_hash=o.hash
+         UNION ALL SELECT l.candidate_key,l.record,c.id AS recovery_id FROM context_recovery_links l JOIN context_recoveries c ON c.id=l.recovery_id JOIN jobs j ON j.id=c.batch_id JOIN outputs o ON o.batch_id=j.id JOIN runs r ON r.id=c.run_id WHERE r.active=1 AND j.state='ready' AND j.output_hash=o.hash AND json_extract(c.input,'$.blocks[0].outputHash')=o.hash AND json_extract(c.input,'$.blocks[0].inputHash')=j.input_hash`,
       )
-      .all() as Array<{ record: string }>;
-    const candidateEvidence = new Set(
-      originals.flatMap((row) => {
-        const c = JSON.parse(row.record) as BatchCandidate;
-        return [...c.questionIds, ...c.responseIds];
-      }),
-    );
+      .all() as Array<{
+      candidate_key: string;
+      record: string;
+      recovery_id: string | null;
+    }>;
+    const knownCandidateEvidence = new Map<string, Set<string>>();
+    const completeReviews = new Map<string, Map<string, Set<string>>>();
+    const candidateEvidence = new Set<string>();
+    for (const row of candidateSources) {
+      const c = JSON.parse(row.record) as BatchCandidate;
+      for (const id of [...c.questionIds, ...c.responseIds]) {
+        const keys = knownCandidateEvidence.get(id) ?? new Set<string>();
+        keys.add(row.candidate_key);
+        knownCandidateEvidence.set(id, keys);
+        if (!row.recovery_id) candidateEvidence.add(id);
+        else if (!c.needsContext) {
+          const review =
+            completeReviews.get(row.recovery_id) ??
+            new Map<string, Set<string>>();
+          const resolved = review.get(id) ?? new Set<string>();
+          resolved.add(row.candidate_key);
+          review.set(id, resolved);
+          completeReviews.set(row.recovery_id, review);
+        }
+      }
+    }
     for (const row of recoveries) {
       const { output } = JSON.parse(row.record) as { output: BatchOutput };
       for (const c of output.candidates.filter((c) => !c.needsContext))
@@ -422,15 +467,62 @@ export class ChatJobStore {
     }
     const rows = this.db
       .prepare(
-        "SELECT j.record,j.run_id,o.hash,o.record AS output FROM jobs j JOIN runs r ON r.id=j.run_id JOIN outputs o ON o.batch_id=j.id WHERE r.active=1 AND j.state='ready' AND j.output_hash=o.hash",
+        "SELECT j.id AS batch_id,j.record,j.run_id,o.hash,o.record AS output FROM jobs j JOIN runs r ON r.id=j.run_id JOIN outputs o ON o.batch_id=j.id WHERE r.active=1 AND j.state='ready' AND j.output_hash=o.hash" +
+          (selection ? " AND j.id=?" : ""),
       )
-      .all() as Array<{
+      .all(...(selection ? [selection.batchId] : [])) as Array<{
+      batch_id: string;
       record: string;
       run_id: string;
       hash: string;
       output: string;
     }>;
     const inputs: ContextRecoveryInput[] = [];
+    // Message decisions cannot resolve a candidate whose role-specific evidence
+    // remains incomplete. Preparation and strict import both project only the
+    // batch's original contributions and declared recovery history.
+    const unresolved = this.collectCandidates(
+      new Set(rows.map((row) => row.batch_id)),
+      recoveries,
+      true,
+      selection?.batchId,
+    ).filter((c) => c.needsContext);
+    const retriesByBatch = new Map<string, Set<string>>();
+    for (const c of unresolved)
+      for (const batchId of c.sourceBatchIds) {
+        const evidence = retriesByBatch.get(batchId) ?? new Set<string>();
+        for (const id of [...c.questionIds, ...c.responseIds]) evidence.add(id);
+        retriesByBatch.set(batchId, evidence);
+      }
+    // Keep a retry at the reviewing batch even when its target review created no
+    // candidate link. Only local target decisions are projected; foreign roles
+    // are supplied through the existing bounded neighbor window, never cloned.
+    const latestReviews = new Map<
+      string,
+      { batchId: string; complete: boolean }
+    >();
+    for (const row of recoveries) {
+      const result = JSON.parse(row.record) as {
+        output: BatchOutput;
+        targetIds: string[];
+      };
+      for (const id of result.targetIds)
+        latestReviews.set(id, {
+          batchId: row.batch_id,
+          // The same message can belong to different questions. A completed
+          // contribution resolves only the candidate key it was linked to.
+          complete: [...(knownCandidateEvidence.get(id) ?? [])].every((key) =>
+            completeReviews.get(row.id)?.get(id)?.has(key),
+          ),
+        });
+    }
+    for (const [id, review] of latestReviews)
+      if (knownCandidateEvidence.has(id) && !review.complete) {
+        const evidence =
+          retriesByBatch.get(review.batchId) ?? new Set<string>();
+        evidence.add(id);
+        retriesByBatch.set(review.batchId, evidence);
+      }
     for (const row of rows) {
       const batch = JSON.parse(row.record) as PreparedBatch;
       if (selection && batch.batchId !== selection.batchId) continue;
@@ -441,6 +533,8 @@ export class ChatJobStore {
           .filter((c) => c.needsContext)
           .flatMap((c) => [...c.questionIds, ...c.responseIds]),
       );
+      const retryEvidence =
+        retriesByBatch.get(batch.batchId) ?? new Set<string>();
       const targets = new Set(
         [
           ...new Set([
@@ -448,13 +542,16 @@ export class ChatJobStore {
               .filter((d) => d.kind === "needs-context")
               .map((d) => d.messageId),
             ...candidateContext,
+            ...retryEvidence,
           ]),
         ]
           .filter(
             (id) =>
               !held.has(id) &&
-              (!candidateEvidence.has(id) || candidateContext.has(id)) &&
-              (!decisions.has(id) || decisions.get(id) === "needs-context"),
+              (retryEvidence.has(id) ||
+                ((!candidateEvidence.has(id) || candidateContext.has(id)) &&
+                  (!decisions.has(id) ||
+                    decisions.get(id) === "needs-context"))),
           )
           .filter(
             (id) =>

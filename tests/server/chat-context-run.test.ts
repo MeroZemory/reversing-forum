@@ -545,133 +545,165 @@ it("stale strict import stops queued packets without any fallback or fabricated 
   ]);
 });
 
-it("uses the real strict helpers on synthetic jobs, retains full position evidence and links candidates idempotently", async () => {
-  const f = fixture(0),
-    store = new ChatJobStore(f.pipeline);
-  stores.push(store);
-  store.prepare(
-    [
+it.each([false, true])(
+  "strict helpers recover full candidate evidence after partial=%s and preserve idempotent replay",
+  async (partial) => {
+    const f = fixture(0),
+      store = new ChatJobStore(f.pipeline);
+    stores.push(store);
+    store.prepare(
+      [
+        {
+          id: "synthetic-linking",
+          bytes: new TextEncoder().encode(
+            "연습방 카카오톡 대화\n--------------- 2026년 10월 2일 금요일 ---------------\n" +
+              Array.from(
+                { length: 7 },
+                (_, n) =>
+                  `[가상발언자] [오전 9:${String(n).padStart(2, "0")}] 합성 분석 ${n}\n`,
+              ).join(""),
+          ),
+        },
+      ],
       {
-        id: "synthetic-linking",
-        bytes: new TextEncoder().encode(
-          "연습방 카카오톡 대화\n--------------- 2026년 10월 2일 금요일 ---------------\n" +
-            Array.from(
-              { length: 7 },
-              (_, n) =>
-                `[가상발언자] [오전 9:${String(n).padStart(2, "0")}] 합성 분석 ${n}\n`,
-            ).join(""),
-        ),
+        targetPrepared: true,
+        scopeApproved: true,
+        externalApproved: true,
+        sampleReviewed: true,
+        scopeVersion: "synthetic-scope",
+        reviewScopeVersion: "synthetic-scope",
+        reviewRuleVersion: SANITIZER_VERSION,
+        externalVersion: "synthetic-external",
+        maxMessages: 20,
+        overlap: 1,
       },
-    ],
-    {
-      targetPrepared: true,
-      scopeApproved: true,
-      externalApproved: true,
-      sampleReviewed: true,
-      scopeVersion: "synthetic-scope",
-      reviewScopeVersion: "synthetic-scope",
-      reviewRuleVersion: SANITIZER_VERSION,
-      externalVersion: "synthetic-external",
-      maxMessages: 20,
-      overlap: 1,
-    },
-  );
-  const batch = store.listBatches()[0];
-  const candidate = {
-    localId: "original",
-    title: "합성 분석 질문",
-    topic: "분석",
-    questionIds: [batch.input.messages[3].id],
-    responseIds: [batch.input.messages[4].id],
-    uncertainties: [],
-    needsContext: true,
-  };
-  store.importResult(
-    batch.batchId,
-    JSON.stringify({
-      batchId: batch.batchId,
-      inputHash: batch.inputHash,
-      complete: true,
-      candidates: [candidate],
-      dispositions: batch.input.messages
-        .filter((_, n) => ![3, 4].includes(n))
-        .map((m) => ({
-          messageId: m.id,
-          kind: "noncandidate",
-          reason: "합성 분류",
-        })),
-    }),
-    { summary: false },
-  );
-  const db = new Database(join(f.pipeline, "jobs.sqlite"), { readonly: true });
-  const snapshot = () =>
-    JSON.stringify(
-      ["jobs", "outputs", "candidate_links"].map((table) =>
-        db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
-      ),
     );
-  const before = snapshot(),
-    calls: Launch[] = [];
-  const runner: Runner = async (launch) => {
-    calls.push(launch);
-    const { script, args } = command(launch);
-    if (script === "chat-codex-run.ts") {
-      const input = read(args[1]);
-      expect(input.blocks[0].targetIds).toEqual([3, 4]);
-      expect(input.blocks[0].messages.map((m: unknown[]) => m[0])).toEqual([
-        1, 2, 3, 4, 5, 6,
-      ]);
-      write(args[2], output(input, true));
-      return { code: 0 };
-    }
-    return {
-      code: 0,
-      stdout: JSON.stringify(
-        args[0] === "prepare"
-          ? prepareContextRecovery(store, f.directory)
-          : importContextRecoveryOutput(store, f.directory, args[1]),
-      ),
+    const batch = store.listBatches()[0];
+    const candidate = {
+      localId: "original",
+      title: "합성 분석 질문",
+      topic: "분석",
+      questionIds: [batch.input.messages[3].id],
+      responseIds: [batch.input.messages[4].id],
+      uncertainties: [],
+      needsContext: true,
     };
-  };
-  try {
-    const first = await runContext({ root: f.root, concurrency: 2 }, runner);
-    expect(first.code).toBe(0);
-    expect(first.counts).toMatchObject({
-      importedPackets: 1,
-      candidates: 1,
-      needsContext: 0,
-    });
-    expect(snapshot()).toBe(before);
-    expect(
-      db.prepare("SELECT candidate_key FROM context_recovery_links").get(),
-    ).toEqual(db.prepare("SELECT candidate_key FROM candidate_links").get());
-    const linked = JSON.parse(
-      (
-        db.prepare("SELECT record FROM context_recovery_links").get() as {
-          record: string;
-        }
-      ).record,
+    store.importResult(
+      batch.batchId,
+      JSON.stringify({
+        batchId: batch.batchId,
+        inputHash: batch.inputHash,
+        complete: true,
+        candidates: [candidate],
+        dispositions: batch.input.messages
+          .filter((_, n) => ![3, 4].includes(n))
+          .map((m) => ({
+            messageId: m.id,
+            kind: "noncandidate",
+            reason: "합성 분류",
+          })),
+      }),
+      { summary: false },
     );
-    expect(linked.questionIds).toEqual(candidate.questionIds);
-    expect(linked.responseIds).toEqual(candidate.responseIds);
-    calls.length = 0;
-    expect(
-      (await runContext({ root: f.root, concurrency: 2 }, runner)).code,
-    ).toBe(0);
-    expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
-    rmSync(join(f.pipeline, "context-progress.json"));
-    calls.length = 0;
-    const replay = await runContext({ root: f.root, concurrency: 2 }, runner);
-    expect(replay.counts.candidates).toBe(1);
-    expect(calls.map(command).map((c) => c.args[0])).toEqual([
-      "prepare",
-      "import",
-    ]);
-    expect(snapshot()).toBe(before);
-    expect(
-      db.prepare("SELECT COUNT(*) AS n FROM context_recovery_links").get(),
-    ).toEqual({ n: 1 });
-  } finally {
-    db.close();
-  }
-}, 15_000);
+    const db = new Database(join(f.pipeline, "jobs.sqlite"), {
+      readonly: true,
+    });
+    const snapshot = () =>
+      JSON.stringify(
+        ["jobs", "outputs", "candidate_links"].map((table) =>
+          db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+        ),
+      );
+    const before = snapshot(),
+      calls: Launch[] = [],
+      modelInputs: ContextRecoveryInput[] = [];
+    const runner: Runner = async (launch) => {
+      calls.push(launch);
+      const { script, args } = command(launch);
+      if (script === "chat-codex-run.ts") {
+        const input = read(args[1]);
+        modelInputs.push(input);
+        expect(input.blocks[0].targetIds).toEqual([3, 4]);
+        expect(input.blocks[0].messages.map((m: unknown[]) => m[0])).toEqual([
+          1, 2, 3, 4, 5, 6,
+        ]);
+        const result = output(input, true);
+        if (partial && modelInputs.length === 1) {
+          result.blocks[0].candidates[0].responseIds = [];
+          result.blocks[0].noncandidateRanges = [[4, 4]];
+        }
+        write(args[2], result);
+        return { code: 0 };
+      }
+      return {
+        code: 0,
+        stdout: JSON.stringify(
+          args[0] === "prepare"
+            ? prepareContextRecovery(store, f.directory)
+            : importContextRecoveryOutput(store, f.directory, args[1]),
+        ),
+      };
+    };
+    try {
+      const first = await runContext({ root: f.root, concurrency: 2 }, runner);
+      expect(first.code).toBe(0);
+      expect(first.counts).toMatchObject({
+        importedPackets: 1,
+        candidates: 1,
+        needsContext: 0,
+      });
+      expect(store.listCandidates()[0].needsContext).toBe(partial);
+      if (partial) {
+        const retry = await runContext(
+          { root: f.root, concurrency: 2 },
+          runner,
+        );
+        expect(retry.code).toBe(0);
+        expect(modelInputs).toHaveLength(2);
+        expect(modelInputs[1].packetId).not.toBe(modelInputs[0].packetId);
+        expect(modelInputs[1].blocks[0].previousRecoveryIds).toEqual([
+          modelInputs[0].packetId,
+        ]);
+      }
+      expect(store.listCandidates()).toHaveLength(1);
+      expect(store.listCandidates()[0].needsContext).toBe(false);
+      expect(store.listContextRecoveryInputs()).toEqual([]);
+      expect(snapshot()).toBe(before);
+      expect(
+        db.prepare("SELECT candidate_key FROM context_recovery_links").get(),
+      ).toEqual(db.prepare("SELECT candidate_key FROM candidate_links").get());
+      const linked = JSON.parse(
+        (
+          db
+            .prepare(
+              "SELECT record FROM context_recovery_links ORDER BY rowid DESC LIMIT 1",
+            )
+            .get() as {
+            record: string;
+          }
+        ).record,
+      );
+      expect(linked.questionIds).toEqual(candidate.questionIds);
+      expect(linked.responseIds).toEqual(candidate.responseIds);
+      calls.length = 0;
+      expect(
+        (await runContext({ root: f.root, concurrency: 2 }, runner)).code,
+      ).toBe(0);
+      expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
+      rmSync(join(f.pipeline, "context-progress.json"));
+      calls.length = 0;
+      const replay = await runContext({ root: f.root, concurrency: 2 }, runner);
+      expect(replay.counts.candidates).toBe(partial ? 2 : 1);
+      expect(calls.map(command).map((c) => c.args[0])).toEqual(
+        partial ? ["prepare", "import", "import"] : ["prepare", "import"],
+      );
+      expect(snapshot()).toBe(before);
+      expect(
+        db.prepare("SELECT COUNT(*) AS n FROM context_recovery_links").get(),
+      ).toEqual({ n: partial ? 2 : 1 });
+    } finally {
+      db.close();
+    }
+  },
+  15_000,
+);

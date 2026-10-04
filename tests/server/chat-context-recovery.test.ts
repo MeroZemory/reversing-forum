@@ -691,6 +691,301 @@ it("다른 배치에서 복구된 동일 근거가 있어도 이미 준비한 pa
     needsContext: 0,
     noncandidate: 7,
   });
+  expect(
+    f.store.importContextRecovery(
+      inputs[0],
+      output(inputs[0], {
+        noncandidateRanges: inputs[0].blocks[0].targetIds.map((i) => [i, i]),
+      }),
+    ).replay,
+  ).toBe(true);
+});
+
+it.each(["linkless", "different", "invalid-source"])(
+  "foreign review %s retains only a valid recovery path",
+  (kind) => {
+    const differentCandidate = kind === "different";
+    const f = fixture({ ...ready, maxMessages: 4, overlap: 2 }, [
+      "문맥 0",
+      "문맥 1",
+      "질문 2",
+      "응답 3",
+      "문맥 4",
+      "문맥 5",
+    ]);
+    const [a, b] = f.batches;
+    for (const batch of f.batches)
+      f.store.importResult(
+        batch.batchId,
+        JSON.stringify({
+          batchId: batch.batchId,
+          inputHash: batch.inputHash,
+          complete: true,
+          candidates: [],
+          dispositions: batch.input.messages.map((m, i) => ({
+            messageId: m.id,
+            kind: (batch === a ? [2, 3] : [0]).includes(i)
+              ? "needs-context"
+              : "noncandidate",
+            reason: "합성 분류",
+          })),
+        }),
+      );
+    const before = snapshot(f);
+    const prepared = f.store.listContextRecoveryInputs();
+    const inputA = prepared.find((p) => p.blocks[0].batchId === a.batchId)!;
+    const inputB = prepared.find((p) => p.blocks[0].batchId === b.batchId)!;
+    const candidate = {
+      localId: "resolved",
+      title: "합성 분석",
+      topic: "기술",
+      questionIds: [2],
+      responseIds: [3],
+      uncertainties: [],
+      needsContext: false,
+    };
+    f.store.importContextRecovery(
+      inputA,
+      output(inputA, { candidates: [candidate] }),
+    );
+    expect(f.store.listCandidates()[0].needsContext).toBe(false);
+    f.store.importContextRecovery(
+      inputB,
+      output(
+        inputB,
+        differentCandidate
+          ? {
+              candidates: [
+                {
+                  ...candidate,
+                  localId: "different",
+                  questionIds: [2],
+                  responseIds: [0],
+                },
+              ],
+            }
+          : { noncandidateRanges: [[0, 0]] },
+      ),
+    );
+    expect(f.store.listCandidates()[0].needsContext).toBe(true);
+    if (kind === "invalid-source") {
+      const db = new Database(join(f.store.directory, "jobs.sqlite"));
+      try {
+        db.prepare("UPDATE jobs SET output_hash=? WHERE id=?").run(
+          "f".repeat(64),
+          a.batchId,
+        );
+        expect(f.store.listCandidates()).toEqual([]);
+        expect(f.store.listContextRecoveryInputs()).toEqual([]);
+        expect(f.store.summary().semanticReviewRequiredMessages).toBe(0);
+      } finally {
+        db.close();
+      }
+      return;
+    }
+    const retries = f.store.listContextRecoveryInputs();
+    expect(retries.map((p) => p.blocks[0].batchId)).toEqual([b.batchId]);
+    const [retry] = retries;
+    expect(retry.blocks[0].targetIds).toEqual([0]);
+    expect(retry.blocks[0].previousRecoveryIds).toEqual([inputB.packetId]);
+    const raw = output(retry, {
+      candidates: [{ ...candidate, questionIds: [0], responseIds: [1] }],
+    });
+    expect(() => f.store.importContextRecovery(retry, raw)).not.toThrow();
+    expect(f.store.importContextRecovery(retry, raw).replay).toBe(true);
+    expect(f.store.listCandidates()[0].needsContext).toBe(false);
+    if (differentCandidate) {
+      // Repairing the original question cannot silently resolve a different
+      // question which used that message as a response. It remains recoverable.
+      expect(f.store.listCandidates()).toHaveLength(2);
+      expect(f.store.listCandidates()[1].needsContext).toBe(true);
+      expect(f.store.listContextRecoveryInputs().length).toBeGreaterThan(0);
+    } else expect(f.store.listContextRecoveryInputs()).toEqual([]);
+    expect(snapshot(f)).toBe(before);
+  },
+);
+
+it("a later complete review stops stale retries in earlier overlapping batches", () => {
+  const f = fixture({ ...ready, maxMessages: 5, overlap: 4 }, [
+    "문맥 0",
+    "문맥 1",
+    "질문 2",
+    "질문 3",
+    "응답 4",
+    "문맥 5",
+    "문맥 6",
+  ]);
+  expect(f.batches).toHaveLength(3);
+  for (const batch of f.batches)
+    f.store.importResult(
+      batch.batchId,
+      JSON.stringify({
+        batchId: batch.batchId,
+        inputHash: batch.inputHash,
+        complete: true,
+        candidates: [],
+        dispositions: batch.input.messages.map((m) => ({
+          messageId: m.id,
+          kind:
+            m.id === f.batches[0].input.messages[4].id
+              ? "needs-context"
+              : "noncandidate",
+          reason: "합성 분류",
+        })),
+      }),
+    );
+  const before = snapshot(f),
+    prepared = f.store.listContextRecoveryInputs();
+  const [a, b, c] = f.batches.map((batch) =>
+    prepared.find((p) => p.blocks[0].batchId === batch.batchId)!,
+  );
+  const candidate = (localId: string, question: number, response: number) => ({
+    localId,
+    title: "합성 분석",
+    topic: "기술",
+    questionIds: [question],
+    responseIds: [response],
+    uncertainties: [],
+    needsContext: false,
+  });
+  f.store.importContextRecovery(
+    a,
+    output(a, { candidates: [candidate("first", 3, 4)] }),
+  );
+  f.store.importContextRecovery(
+    b,
+    output(b, { candidates: [candidate("second", 1, 3)] }),
+  );
+  const retry = f.store
+    .listContextRecoveryInputs()
+    .find((p) => p.blocks[0].batchId === b.blocks[0].batchId)!;
+  expect(retry.blocks[0].targetIds).toEqual([3]);
+  f.store.importContextRecovery(
+    retry,
+    output(retry, { candidates: [candidate("first-again", 2, 3)] }),
+  );
+  expect(f.store.listCandidates().some((x) => x.needsContext)).toBe(true);
+  f.store.importContextRecovery(
+    c,
+    output(c, {
+      candidates: [
+        candidate("first-final", 1, 2),
+        candidate("second-final", 0, 2),
+      ],
+    }),
+  );
+  expect(f.store.listCandidates()).toHaveLength(2);
+  expect(f.store.listCandidates().every((x) => !x.needsContext)).toBe(true);
+  expect(f.store.listContextRecoveryInputs()).toEqual([]);
+  expect(snapshot(f)).toBe(before);
+});
+
+it("cross-batch retry preparation imports against batch-scoped recovery history", () => {
+  const f = fixture({ ...ready, maxMessages: 4, overlap: 2 }, [
+    "문맥 0",
+    "문맥 1",
+    "질문 2",
+    "응답 3",
+    "응답 4",
+    "문맥 5",
+  ]);
+  const [a, b] = f.batches;
+  expect(f.batches).toHaveLength(2);
+  const candidate = (
+    questionIds: string[],
+    responseIds: string[],
+    needsContext: boolean,
+  ): BatchCandidate => ({
+    localId: "original",
+    title: "합성 분석",
+    topic: "기술",
+    questionIds,
+    responseIds,
+    uncertainties: [],
+    needsContext,
+  });
+  for (const [batch, original] of [
+    [a, candidate([a.input.messages[2].id], [], false)],
+    [b, candidate([b.input.messages[0].id], [b.input.messages[2].id], true)],
+  ] as const) {
+    const evidence = new Set([
+      ...original.questionIds,
+      ...original.responseIds,
+    ]);
+    f.store.importResult(
+      batch.batchId,
+      JSON.stringify({
+        batchId: batch.batchId,
+        inputHash: batch.inputHash,
+        complete: true,
+        candidates: [original],
+        dispositions: batch.input.messages
+          .filter((m) => !evidence.has(m.id))
+          .map((m) => ({
+            messageId: m.id,
+            kind: "noncandidate",
+            reason: "합성 분류",
+          })),
+      }),
+    );
+  }
+  const before = snapshot(f);
+  const initial = f.store.listContextRecoveryInputs();
+  const partial = initial.find(
+    (input) => input.blocks[0].batchId === b.batchId,
+  )!;
+  f.store.importContextRecovery(
+    partial,
+    output(partial, {
+      candidates: [
+        {
+          ...candidate([], [], false),
+          localId: "partial",
+          questionIds: [0],
+          responseIds: [1],
+        },
+      ],
+      noncandidateRanges: [[2, 2]],
+    }),
+  );
+  const prepared = f.store.listContextRecoveryInputs();
+  // A is already resolved locally. Foreign requirements must neither produce
+  // an unimportable A packet nor leave A retrying after B's full repair.
+  expect(prepared.map((input) => input.blocks[0].batchId)).toEqual([b.batchId]);
+  expect(f.store.listCandidates()[0].needsContext).toBe(true);
+  const retryB = prepared.find(
+    (input) => input.blocks[0].batchId === b.batchId,
+  )!;
+  expect(retryB.blocks[0].previousRecoveryIds).toEqual([partial.packetId]);
+  expect(retryB.blocks[0].targetIds).toEqual([0, 1, 2]);
+  const forged = {
+    ...retryB,
+    blocks: [{ ...retryB.blocks[0], previousRecoveryIds: [] }],
+  };
+  forged.packetId = contextRecoveryDigest(
+    JSON.stringify({
+      instructions: forged.instructions,
+      blocks: forged.blocks,
+    }),
+  );
+  expect(() => f.store.importContextRecovery(forged, output(forged))).toThrow(
+    "invalid-context-recovery-input",
+  );
+  const rawB = output(retryB, {
+    candidates: [
+      {
+        ...candidate([], [], false),
+        localId: "resolved",
+        questionIds: [0],
+        responseIds: [1, 2],
+      },
+    ],
+  });
+  expect(() => f.store.importContextRecovery(retryB, rawB)).not.toThrow();
+  expect(f.store.importContextRecovery(retryB, rawB).replay).toBe(true);
+  expect(f.store.listCandidates()[0].needsContext).toBe(false);
+  expect(f.store.listContextRecoveryInputs()).toEqual([]);
+  expect(snapshot(f)).toBe(before);
 });
 
 it("완전한 target 복구는 원본을 보존하면서 후보의 문맥 보류를 해제한다", () => {
@@ -872,6 +1167,27 @@ it.each(["missing", "noncandidate", "role-change", "unresolved"])(
       semanticReviewRequiredMessages: 2,
       messageDispositions: { candidate: 0, needsContext: 2, noncandidate: 5 },
     });
+    const [retry] = f.store.listContextRecoveryInputs();
+    expect(retry?.blocks[0].targetIds).toEqual([2, 3]);
+    expect(retry.blocks[0].previousRecoveryIds).toEqual([input.packetId]);
+    f.store.importContextRecovery(
+      retry,
+      output(retry, {
+        candidates: [
+          {
+            ...original,
+            localId: "resolved",
+            questionIds: [2],
+            responseIds: [3],
+            uncertainties: [],
+            needsContext: false,
+          },
+        ],
+      }),
+    );
+    expect(snapshot(f)).toBe(before);
+    expect(f.store.listCandidates()[0].needsContext).toBe(false);
+    expect(f.store.listContextRecoveryInputs()).toEqual([]);
   },
 );
 
