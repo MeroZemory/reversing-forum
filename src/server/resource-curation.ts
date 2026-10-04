@@ -55,14 +55,14 @@ function publicSnapshot(postId: string) {
     provenance: receipt ? JSON.parse(receipt.provenance) : null,
   };
   // A receipt alone cannot authorize a different stored public payload.
-  // Editorial storage maps its public share purpose to the legacy analysis kind.
+  // Editorial storage keeps questions and maps shares to the legacy analysis kind.
   if (
     receipt &&
-    (post.kind !== "analysis" ||
+    (!["analysis", "question"].includes(post.kind) ||
       digest({
         title: post.title,
         body: post.body,
-        kind: "share",
+        kind: post.kind === "question" ? "question" : "share",
         tags: payload.tags,
         provenance: payload.provenance,
       }) !== receipt.hash)

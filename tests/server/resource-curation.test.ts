@@ -430,95 +430,100 @@ it.each(["held", "pending"])(
   },
 );
 
-it("uses equal member/editorial eligibility and invalidates version changes and real withdrawal", async () => {
-  await editorial.editorialCollectionAction({
-    action: "basis",
-    ...versions,
-    allowed: true,
-  });
-  let draft = (await editorial.editorialCollectionAction({
-    action: "ingest",
-    candidateKey: "curation-editorial",
-    revision: 1,
-    sourceAliases: ["synthetic"],
-    ...versions,
-    publicData: {
-      title: "Ghidra 학습",
-      body: "A synthetic complete public guide for curation.",
-      kind: "share",
-      tags: ["학습"],
-      provenance: {
-        type: "independent-guide",
-        period: "2026-10",
-        verificationSummary: "Synthetic verification",
+it.each(["share", "question"])(
+  "uses equal member/editorial eligibility for %s and invalidates version changes and real withdrawal",
+  async (kind) => {
+    await editorial.editorialCollectionAction({
+      action: "basis",
+      ...versions,
+      allowed: true,
+    });
+    let draft = (await editorial.editorialCollectionAction({
+      action: "ingest",
+      candidateKey: "curation-editorial",
+      revision: 1,
+      sourceAliases: ["synthetic"],
+      ...versions,
+      publicData: {
+        title: "Ghidra 학습",
+        body: "A synthetic complete public guide for curation.",
+        kind,
+        tags: ["학습"],
+        provenance: {
+          type: "independent-guide",
+          period: "2026-10",
+          verificationSummary: "Synthetic verification",
+        },
       },
-    },
-    privateEvidence: { referenceIds: ["synthetic-review"], checks },
-  })) as Awaited<ReturnType<typeof editorial.getEditorial>>;
-  const target = () => ({
-    revision: draft.revision,
-    hash: draft.hash,
-    ...versions,
-  });
-  draft = await editorial.editorialAction("curation-editorial", {
-    action: "review",
-    ...target(),
-    review: {
-      model: "sol",
-      effort: "xhigh",
-      referenceId: "synthetic-review",
-      compared: true,
-      checks,
-    },
-  });
-  draft = await editorial.editorialAction("curation-editorial", {
-    action: "approve",
-    ...target(),
-  });
-  draft = await editorial.editorialAction("curation-editorial", {
-    action: "publish",
-    ...target(),
-  });
-  expect(draft.post?.status).toBe("published");
-  const id = draft.post!.id;
-  expect((await snapshot(id)).eligibleGuides).toEqual(
-    (await snapshot()).eligibleGuides,
-  );
-  await select(id);
-  await select();
-  const guides = resources.resourceGuides(
-    resources.listResourcePosts(),
-    curation.currentResourceSelection(),
-  );
-  expect(guides.map((guide) => guide.count)).toEqual([2, 2]);
-  const original = db.prepare("SELECT body FROM posts WHERE id=?").get(id) as {
-    body: string;
-  };
-  db.prepare(
-    "UPDATE posts SET body='Different from the approved receipt' WHERE id=?",
-  ).run(id);
-  expect(curation.currentResourceSelection().has(id)).toBe(false);
-  await expect(snapshot(id)).rejects.toMatchObject({ status: 409 });
-  db.prepare("UPDATE posts SET body=? WHERE id=?").run(original.body, id);
-  const current = await snapshot(id);
-  db.prepare(
-    "UPDATE editorial_publications SET versions=? WHERE candidate_key='curation-editorial'",
-  ).run(JSON.stringify({ ...versions, rulesVersion: "rules-2" }));
-  expect(curation.currentResourceSelection().has(id)).toBe(false);
-  await expect(
-    curation.resourceCurationAction({
-      action: "select",
-      postId: id,
-      hash: current.hash,
-      version: current.version,
-    }),
-  ).rejects.toMatchObject({ status: 409 });
-  await select(id);
-  await editorial.editorialAction("curation-editorial", {
-    action: "withdraw",
-    ...target(),
-  });
-  expect(curation.currentResourceSelection().has(id)).toBe(false);
-  expect(curation.currentResourceSelection().has("member-post")).toBe(true);
-  await expect(snapshot(id)).rejects.toMatchObject({ status: 404 });
-});
+      privateEvidence: { referenceIds: ["synthetic-review"], checks },
+    })) as Awaited<ReturnType<typeof editorial.getEditorial>>;
+    const target = () => ({
+      revision: draft.revision,
+      hash: draft.hash,
+      ...versions,
+    });
+    draft = await editorial.editorialAction("curation-editorial", {
+      action: "review",
+      ...target(),
+      review: {
+        model: "sol",
+        effort: "xhigh",
+        referenceId: "synthetic-review",
+        compared: true,
+        checks,
+      },
+    });
+    draft = await editorial.editorialAction("curation-editorial", {
+      action: "approve",
+      ...target(),
+    });
+    draft = await editorial.editorialAction("curation-editorial", {
+      action: "publish",
+      ...target(),
+    });
+    expect(draft.post?.status).toBe("published");
+    const id = draft.post!.id;
+    expect((await snapshot(id)).eligibleGuides).toEqual(
+      (await snapshot()).eligibleGuides,
+    );
+    await select(id);
+    await select();
+    const guides = resources.resourceGuides(
+      resources.listResourcePosts(),
+      curation.currentResourceSelection(),
+    );
+    expect(guides.map((guide) => guide.count)).toEqual([2, 2]);
+    const original = db
+      .prepare("SELECT body FROM posts WHERE id=?")
+      .get(id) as {
+      body: string;
+    };
+    db.prepare(
+      "UPDATE posts SET body='Different from the approved receipt' WHERE id=?",
+    ).run(id);
+    expect(curation.currentResourceSelection().has(id)).toBe(false);
+    await expect(snapshot(id)).rejects.toMatchObject({ status: 409 });
+    db.prepare("UPDATE posts SET body=? WHERE id=?").run(original.body, id);
+    const current = await snapshot(id);
+    db.prepare(
+      "UPDATE editorial_publications SET versions=? WHERE candidate_key='curation-editorial'",
+    ).run(JSON.stringify({ ...versions, rulesVersion: "rules-2" }));
+    expect(curation.currentResourceSelection().has(id)).toBe(false);
+    await expect(
+      curation.resourceCurationAction({
+        action: "select",
+        postId: id,
+        hash: current.hash,
+        version: current.version,
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    await select(id);
+    await editorial.editorialAction("curation-editorial", {
+      action: "withdraw",
+      ...target(),
+    });
+    expect(curation.currentResourceSelection().has(id)).toBe(false);
+    expect(curation.currentResourceSelection().has("member-post")).toBe(true);
+    await expect(snapshot(id)).rejects.toMatchObject({ status: 404 });
+  },
+);
