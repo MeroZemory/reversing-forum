@@ -1437,6 +1437,252 @@ describe("corpus orchestration boundaries", () => {
     },
   );
 
+  it("keeps failure context local to concurrent manifest packets and bounds history", async () => {
+    const { root, directory, packets } = fixture(2);
+    const old = {
+      at: "2026-10-01T00:00:00.000Z",
+      packetId: id(99),
+      stage: "model",
+      errorCode: "corpus-step-failed",
+    };
+    write(join(directory, "candidate-progress.json"), {
+      version: 1,
+      steps: {},
+      counts: { imported: 0, reviewed: 0, published: 0, held: 0 },
+      candidateFailureContexts: Array.from({ length: 20 }, () => old),
+    });
+    let releaseModel!: () => void;
+    const importStarted = new Promise<void>((done) => (releaseModel = done));
+    const startedAt = Date.now();
+    const result = await runCorpus(
+      {
+        root,
+        phase: "candidate",
+        concurrency: 2,
+        separateCandidateProgress: true,
+      },
+      async (launch) => {
+        const { script, args } = command(launch);
+        if (script === "chat-codex-run.ts") {
+          const packetId = read(args[1]).packetId;
+          if (packetId === packets[0].packetId) {
+            await importStarted;
+            return { code: 1, errorCode: "network-failure" };
+          }
+          write(args[2], candidateOutput(packetId));
+          return { code: 0 };
+        }
+        releaseModel();
+        throw new Error("private synthetic evidence api_key=not-a-real-key");
+      },
+    );
+    expect(result.code).toBe(1);
+    const contexts = result.progress.candidateFailureContexts!;
+    expect(contexts).toHaveLength(20);
+    expect(contexts.slice(0, 18)).toEqual(
+      Array.from({ length: 18 }, () => old),
+    );
+    expect(contexts.slice(-2)).toEqual(
+      expect.arrayContaining([
+        {
+          at: expect.any(String),
+          packetId: packets[0].packetId,
+          stage: "model",
+          errorCode: "network-failure",
+        },
+        {
+          at: expect.any(String),
+          packetId: packets[1].packetId,
+          stage: "normalize_import",
+          errorCode: "runner-failed",
+        },
+      ]),
+    );
+    for (const context of contexts.slice(-2)) {
+      expect(Date.parse(context.at)).toBeGreaterThanOrEqual(startedAt);
+      expect(Date.parse(context.at)).toBeLessThanOrEqual(Date.now());
+      expect(Object.keys(context).sort()).toEqual([
+        "at",
+        "errorCode",
+        "packetId",
+        "stage",
+      ]);
+    }
+    const persisted = readFileSync(
+      join(directory, "candidate-progress.json"),
+      "utf8",
+    );
+    expect(persisted).not.toContain("private synthetic evidence");
+    expect(persisted).not.toContain("not-a-real-key");
+    expect(result.progress.counts.imported).toBe(0);
+    expect(
+      result.progress.steps[`import:${packets[1].packetId}`],
+    ).toBeUndefined();
+  });
+
+  it("resumes an old checkpoint and cached import without adding failure context", async () => {
+    const { root, directory, packets } = fixture(1);
+    const output = packets[0].file.replace(".input.json", ".output.json");
+    write(output, candidateOutput(packets[0].packetId));
+    const before = readFileSync(output);
+    const oldFailure = { script: "chat-corpus-run.ts", exitCode: 1 };
+    const options = {
+      root,
+      phase: "candidate" as const,
+      concurrency: 1,
+      separateCandidateProgress: true,
+    };
+    write(join(directory, "candidate-progress.json"), {
+      version: 1,
+      steps: {},
+      failures: [oldFailure],
+      counts: { imported: 0, reviewed: 0, published: 0, held: 0 },
+    });
+    const calls: Launch[] = [];
+    const first = await runCorpus(options, candidateRunner(calls));
+    expect(first.code).toBe(0);
+    expect(calls.map((c) => command(c).script)).toEqual([
+      "chat-native-batches.ts",
+    ]);
+    expect(first.progress.candidateFailureContexts).toBeUndefined();
+    expect(first.progress.failures).toEqual([oldFailure]);
+    expect(first.progress.counts.imported).toBe(1);
+    calls.length = 0;
+    const resumed = await runCorpus(options, candidateRunner(calls));
+    expect(resumed.code).toBe(0);
+    expect(calls).toHaveLength(0);
+    expect(resumed.progress).toEqual(first.progress);
+    expect(readFileSync(output)).toEqual(before);
+  });
+
+  it.each(
+    [
+      null,
+      {},
+      [
+        {
+          at: "private diagnostic",
+          packetId: id(1),
+          stage: "model",
+          errorCode: "corpus-step-failed",
+        },
+      ],
+      [
+        {
+          at: "2026-10-01T00:00:00.000Z",
+          packetId: "private packet",
+          stage: "model",
+          errorCode: "corpus-step-failed",
+        },
+      ],
+      [
+        {
+          at: "2026-10-01T00:00:00.000Z",
+          packetId: id(1),
+          stage: "private stage",
+          errorCode: "corpus-step-failed",
+        },
+      ],
+      [
+        {
+          at: "2026-10-01T00:00:00.000Z",
+          packetId: id(1),
+          stage: "model",
+          errorCode: "api_key=not-a-real-key",
+        },
+      ],
+      [
+        {
+          at: "2026-10-01T00:00:00.000Z",
+          packetId: id(1),
+          stage: "model",
+          errorCode: "corpus-step-failed",
+          stack: "private stack",
+        },
+      ],
+      Array.from({ length: 21 }, () => ({
+        at: "2026-10-01T00:00:00.000Z",
+        packetId: id(1),
+        stage: "model",
+        errorCode: "corpus-step-failed",
+      })),
+    ].map((contexts) => ({ contexts })),
+  )(
+    "strictly rejects malformed candidate failure context %#",
+    async ({ contexts }) => {
+      const { root, directory } = fixture(1);
+      write(join(directory, "candidate-progress.json"), {
+        version: 1,
+        steps: {},
+        counts: { imported: 0, reviewed: 0, published: 0, held: 0 },
+        candidateFailureContexts: contexts,
+      });
+      const runner = vi.fn<Runner>();
+      await expect(
+        runCorpus(
+          {
+            root,
+            phase: "candidate",
+            concurrency: 1,
+            separateCandidateProgress: true,
+          },
+          runner,
+        ),
+      ).rejects.toThrow("invalid-checkpoint");
+      expect(runner).not.toHaveBeenCalled();
+    },
+  );
+
+  it("records a quarantine failure without fabricating an import receipt", async () => {
+    const { root, packets } = fixture(1);
+    const result = await runCorpus(
+      {
+        root,
+        phase: "candidate",
+        concurrency: 1,
+        quarantineInvalidCandidates: true,
+      },
+      async (launch) => {
+        const { script, args } = command(launch);
+        if (script === "chat-codex-run.ts") {
+          write(args[2], candidateOutput(packets[0].packetId));
+          return { code: 0 };
+        }
+        if (args[0] !== "context-only")
+          return { code: 1, errorCode: "invalid-native-range" };
+        return {
+          code: 0,
+          stdout:
+            "private quarantine error test@example.com api_key=not-a-real-key",
+        };
+      },
+    );
+    expect(result.code).toBe(1);
+    expect(result.progress.candidateFailureContexts).toEqual([
+      {
+        at: expect.any(String),
+        packetId: packets[0].packetId,
+        stage: "normalize_import",
+        errorCode: "invalid-native-range",
+      },
+      {
+        at: expect.any(String),
+        packetId: packets[0].packetId,
+        stage: "quarantine",
+        errorCode: "corpus-step-failed",
+      },
+    ]);
+    expect(
+      result.progress.steps[`import:${packets[0].packetId}`],
+    ).toBeUndefined();
+    expect(result.progress.counts.imported).toBe(0);
+    expect(JSON.stringify(result.progress)).not.toContain(
+      "private quarantine error",
+    );
+    expect(JSON.stringify(result.progress)).not.toContain("test@example.com");
+    expect(JSON.stringify(result.progress)).not.toContain("not-a-real-key");
+  });
+
   it("records budget and thrown-runner failures with only known labels", async () => {
     const { root } = fixture(1);
     const budget = await runCorpus(

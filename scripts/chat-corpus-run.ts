@@ -45,10 +45,23 @@ type Receipt = {
   needsContextCandidates?: number;
   quarantined?: boolean;
 };
+type CandidateFailureContext = {
+  at: string;
+  packetId: string;
+  stage: "model" | "normalize_import" | "quarantine";
+  errorCode: string;
+};
+type CandidateWorkContext = Pick<
+  CandidateFailureContext,
+  "packetId" | "stage"
+> & {
+  errorCode?: string;
+};
 type Progress = {
   version: 1;
   steps: Record<string, Receipt>;
   failures?: Array<{ script: string; exitCode: number; errorCode?: string }>;
+  candidateFailureContexts?: CandidateFailureContext[];
   counts: {
     imported: number;
     reviewed: number;
@@ -430,6 +443,28 @@ export async function runCorpus(
       ))
   )
     throw new Error("invalid-checkpoint");
+  if (
+    progress.candidateFailureContexts !== undefined &&
+    (!Array.isArray(progress.candidateFailureContexts) ||
+      progress.candidateFailureContexts.length > 20 ||
+      progress.candidateFailureContexts.some(
+        (f) =>
+          !f ||
+          typeof f !== "object" ||
+          Object.keys(f).length !== 4 ||
+          Object.keys(f).some(
+            (k) => !["at", "packetId", "stage", "errorCode"].includes(k),
+          ) ||
+          typeof f.at !== "string" ||
+          !Number.isFinite(Date.parse(f.at)) ||
+          new Date(f.at).toISOString() !== f.at ||
+          typeof f.packetId !== "string" ||
+          !/^[a-f0-9]{64}$/.test(f.packetId) ||
+          !["model", "normalize_import", "quarantine"].includes(f.stage) ||
+          !safeCode(f.errorCode),
+      ))
+  )
+    throw new Error("invalid-checkpoint");
   for (const [key, receipt] of Object.entries(progress.steps)) {
     if (
       !/^(?:candidate|draft|review|import|bundle|publish):[a-f0-9]{64}$/.test(
@@ -520,8 +555,10 @@ export async function runCorpus(
     args: string[],
     publish = false,
     recoverOutputValidation = false,
+    candidateContext?: CandidateWorkContext,
   ) => {
     if (code) throw new Error("stopped");
+    if (candidateContext) candidateContext.errorCode = undefined;
     let result: Awaited<ReturnType<Runner>>;
     try {
       result = await runner({
@@ -537,6 +574,11 @@ export async function runCorpus(
         signal: controller.signal,
       });
     } catch (error) {
+      if (candidateContext)
+        candidateContext.errorCode =
+          error instanceof Error
+            ? (safeCode(error.message) ?? "runner-failed")
+            : "runner-failed";
       fail(
         script,
         1,
@@ -549,6 +591,7 @@ export async function runCorpus(
     if (result.code !== 0) {
       const errorCode =
         safeCode(result.errorCode) ?? diagnosticCode(result.stdout ?? "");
+      if (candidateContext) candidateContext.errorCode = errorCode;
       if (
         !code &&
         recoverOutputValidation &&
@@ -574,11 +617,24 @@ export async function runCorpus(
     args: string[],
     publish = false,
     recoverOutputValidation = false,
+    candidateContext?: CandidateWorkContext,
   ) => {
     if (script !== "chat-native-batches.ts")
-      return invokeChild(script, args, publish, recoverOutputValidation);
+      return invokeChild(
+        script,
+        args,
+        publish,
+        recoverOutputValidation,
+        candidateContext,
+      );
     const pending = nativeTail.then(() =>
-      invokeChild(script, args, publish, recoverOutputValidation),
+      invokeChild(
+        script,
+        args,
+        publish,
+        recoverOutputValidation,
+        candidateContext,
+      ),
     );
     nativeTail = pending.catch(() => {});
     return pending;
@@ -604,6 +660,24 @@ export async function runCorpus(
     stop(exit);
     recordFailure(script, exit, errorCode);
   };
+  const recordCandidateFailure = (
+    context: CandidateWorkContext,
+    error: unknown,
+  ) => {
+    progress.candidateFailureContexts = [
+      ...(progress.candidateFailureContexts ?? []),
+      {
+        at: new Date().toISOString(),
+        packetId: context.packetId,
+        stage: context.stage,
+        errorCode:
+          (error instanceof Error ? safeCode(error.message) : undefined) ??
+          safeCode(context.errorCode) ??
+          "corpus-step-failed",
+      },
+    ].slice(-20);
+    checkpoint();
+  };
   const packets = (path: string) => {
     const manifest = read(path);
     if (
@@ -615,7 +689,11 @@ export async function runCorpus(
       throw new Error("invalid-manifest");
     return manifest.packets.slice(0, options.limitPackets) as Json[];
   };
-  const pool = async (items: Json[], work: (item: Json) => Promise<void>) => {
+  const pool = async (
+    items: Json[],
+    work: (item: Json, context: CandidateWorkContext) => Promise<void>,
+    candidateFailures = false,
+  ) => {
     let next = 0;
     await Promise.all(
       Array.from(
@@ -623,9 +701,14 @@ export async function runCorpus(
         async () => {
           while (!code && next < items.length) {
             const item = items[next++];
+            const context: CandidateWorkContext = {
+              packetId: item.packetId,
+              stage: "model",
+            };
             try {
-              await work(item);
+              await work(item, context);
             } catch (error) {
+              if (candidateFailures) recordCandidateFailure(context, error);
               fail(
                 "chat-corpus-run.ts",
                 1,
@@ -646,6 +729,7 @@ export async function runCorpus(
     allowCandidateSubset = false,
     quarantineInvalidOutput = false,
     manifestPacketId?: string,
+    candidateContext?: CandidateWorkContext,
   ) => {
     const source = read(input);
     if (mode === "candidate" && source.packetId !== manifestPacketId)
@@ -681,10 +765,18 @@ export async function runCorpus(
             manifestPacketId === options.quarantineFailedPacket,
           cacheDirectory: join(directory, "candidate-shards"),
           receiptDirectory: join(directory, "codex-logs"),
-          invoke: (args) => invoke("chat-codex-run.ts", args),
+          invoke: (args) =>
+            invoke("chat-codex-run.ts", args, false, false, candidateContext),
           validate: (value, template) => validate(value, template),
         });
-      else await invoke("chat-codex-run.ts", [mode, input, output, schema]);
+      else
+        await invoke(
+          "chat-codex-run.ts",
+          [mode, input, output, schema],
+          false,
+          false,
+          candidateContext,
+        );
     }
     const result = read(output);
     validate(result, read(schema));
@@ -759,7 +851,7 @@ export async function runCorpus(
         throw new Error("invalid-packet-path");
       await pool(
         packets(join(directory, "triage/relevant/manifest.json")),
-        async (packet) => {
+        async (packet, context) => {
           const nativeOutput = join(
             directory,
             "native",
@@ -807,7 +899,10 @@ export async function runCorpus(
               repair,
               quarantine,
               packet.packetId,
+              context,
             );
+            context.stage = "normalize_import";
+            context.errorCode = undefined;
             const hash = digest([
               read(input),
               read(output),
@@ -828,6 +923,7 @@ export async function runCorpus(
                 ],
                 false,
                 quarantine,
+                context,
               );
               const repaired = repair ? lastJson(stdout) : undefined;
               if (
@@ -870,8 +966,17 @@ export async function runCorpus(
               throw error;
             if (!helperAttempted)
               recordFailure("chat-corpus-run.ts", 1, error.message);
+            recordCandidateFailure(context, error);
+            context.stage = "quarantine";
+            context.errorCode = undefined;
             const result = lastJson(
-              await invoke("chat-native-batches.ts", ["context-only", output]),
+              await invoke(
+                "chat-native-batches.ts",
+                ["context-only", output],
+                false,
+                false,
+                context,
+              ),
             );
             if (
               result.quarantined !== true ||
@@ -898,6 +1003,7 @@ export async function runCorpus(
             checkpoint();
           }
         },
+        true,
       );
     }
     if (!code && (options.phase === "draft" || options.phase === "all")) {
