@@ -434,7 +434,7 @@ describe("pipeline model proxy budget", () => {
       ledger.close();
     }
     for (const override of [
-      { maxPercent: 20.01 },
+      { maxPercent: 30.01 },
       { maxPercent: NaN },
       { maxPercent: Infinity },
       { maxPercent: -Infinity },
@@ -474,7 +474,7 @@ describe("pipeline model proxy budget", () => {
       ),
     ).toBeCloseTo(0.0240003);
   });
-  it("explicitly permits 20% in the same window without clearing charged or unknown usage", () => {
+  it("explicitly permits 20% then 30% in the same window without clearing charged or unknown usage", () => {
     const directory = mkdtempSync(join(tmpdir(), "model-budget-test-"));
     const path = join(directory, "budget.sqlite");
     const original = new ModelBudget(path, config);
@@ -544,6 +544,26 @@ describe("pipeline model proxy budget", () => {
         ),
       ).toBe(false);
       expect(expanded.summary().requests).toBe(3);
+      const expanded30 = new ModelBudget(path, { ...config, maxPercent: 30 });
+      try {
+        expect(expanded30.summary()).toMatchObject({
+          limitProxyUsd: 3,
+          requests: 3,
+          unknownRequests: 2,
+        });
+        expect(expanded30.summary().chargedOrReservedProxyUsd).toBeCloseTo(
+          1.998,
+        );
+        expect(expanded30.summary().window).toEqual(before.window);
+        expect(
+          expanded30.reserve("gpt-6-luna", "candidate", 1, "additional-30"),
+        ).not.toBeNull();
+        expect(
+          expanded30.reserve("gpt-6-luna", "candidate", 0.01, "over-30"),
+        ).toBeNull();
+      } finally {
+        expanded30.close();
+      }
     } finally {
       otherAccount.close();
       expanded.close();
