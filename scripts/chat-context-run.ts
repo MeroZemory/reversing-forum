@@ -21,6 +21,7 @@ import { nodeRunner, type Runner } from "./chat-corpus-run";
 type Options = {
   concurrency: number;
   retryInvalidOutput?: number;
+  quarantineInvalidContext?: boolean;
   solRepair?: boolean;
   limitPackets?: number;
   packetIdsFile?: string;
@@ -37,7 +38,20 @@ type Step = {
   needsContextCandidates: number;
 };
 type Failure = { script: string; exitCode: number; errorCode: string };
-type Progress = { version: 1; steps: Record<string, Step>; failure?: Failure };
+type Quarantine = {
+  inputHash: string;
+  outputHash: string;
+  errorCode: string;
+  targets: number;
+  privateOnly: true;
+  complete: false;
+};
+type Progress = {
+  version: 1;
+  steps: Record<string, Step>;
+  quarantined?: Record<string, Quarantine>;
+  failure?: Failure;
+};
 type Output = {
   packetId: string;
   complete: boolean;
@@ -295,6 +309,8 @@ export function parseContextOptions(args: string[]): Options {
     else if (args[i] === "--limit-packets") options.limitPackets = value;
     else if (args[i] === "--retry-invalid-output" && value <= 2)
       options.retryInvalidOutput = value;
+    else if (args[i] === "--quarantine-invalid-context" && value === 1)
+      options.quarantineInvalidContext = true;
     else if (args[i] === "--sol-repair" && value === 1)
       options.solRepair = true;
     else throw new Error("invalid-context-run-options");
@@ -309,6 +325,8 @@ export async function runContext(
     !number(options.concurrency) ||
     options.concurrency < 1 ||
     options.concurrency > 4 ||
+    (options.quarantineInvalidContext !== undefined &&
+      typeof options.quarantineInvalidContext !== "boolean") ||
     (options.retryInvalidOutput !== undefined &&
       (!number(options.retryInvalidOutput) ||
         options.retryInvalidOutput > 2)) ||
@@ -329,7 +347,7 @@ export async function runContext(
   if (
     progress?.version !== 1 ||
     Object.keys(progress).some(
-      (key) => !["version", "steps", "failure"].includes(key),
+      (key) => !["version", "steps", "quarantined", "failure"].includes(key),
     ) ||
     !progress.steps ||
     typeof progress.steps !== "object" ||
@@ -360,6 +378,24 @@ export async function runContext(
         step.needsContext > step.targets ||
         step.needsContextCandidates > step.candidates,
     ) ||
+    (progress.quarantined !== undefined &&
+      (!progress.quarantined ||
+        typeof progress.quarantined !== "object" ||
+        Array.isArray(progress.quarantined) ||
+        Object.entries(progress.quarantined).some(
+          ([id, held]) =>
+            !hex(id) ||
+            !!progress.steps[id] ||
+            !held ||
+            !hex(held.inputHash) ||
+            !hex(held.outputHash) ||
+            !retryableOutputs.has(held.errorCode) ||
+            !number(held.targets) ||
+            held.privateOnly !== true ||
+            held.complete !== false ||
+            Object.keys(held).sort().join() !==
+              "complete,errorCode,inputHash,outputHash,privateOnly,targets",
+        ))) ||
     (progress.failure &&
       (Object.keys(progress.failure).some(
         (key) => !["script", "exitCode", "errorCode"].includes(key),
@@ -378,6 +414,11 @@ export async function runContext(
   let code = 0,
     importTail: Promise<unknown> = Promise.resolve();
   const counts = () => ({
+    quarantinedPackets: Object.keys(progress.quarantined ?? {}).length,
+    quarantinedTargets: Object.values(progress.quarantined ?? {}).reduce(
+      (n, held) => n + held.targets,
+      0,
+    ),
     importedPackets: Object.keys(progress.steps).length,
     candidates: Object.values(progress.steps).reduce(
       (n, s) => n + s.candidates,
@@ -450,7 +491,11 @@ export async function runContext(
     )
       .filter((entry) => {
         inputSnapshot(directory, entry);
-        const previous = progress.steps[entry.packetId];
+        const previous =
+          progress.steps[entry.packetId] ??
+          (options.quarantineInvalidContext
+            ? progress.quarantined?.[entry.packetId]
+            : undefined);
         if (!previous) return true;
         const file = join(directory, `${entry.packetId}.output.json`);
         if (
@@ -510,6 +555,27 @@ export async function runContext(
                 } catch (error) {
                   const errorCode = error instanceof Error ? error.message : "";
                   if (
+                    options.quarantineInvalidContext &&
+                    retryableOutputs.has(errorCode)
+                  ) {
+                    // Keep original input/output paths, bytes and native receipts.
+                    // This is a local validation hold, never a successful step.
+                    progress.quarantined ??= {};
+                    progress.quarantined[entry.packetId] = {
+                      inputHash: entry.hash,
+                      outputHash: contextRecoveryDigest(raw),
+                      errorCode,
+                      targets: input.blocks.reduce(
+                        (n, block) => n + block.targetIds.length,
+                        0,
+                      ),
+                      privateOnly: true,
+                      complete: false,
+                    };
+                    checkpoint();
+                    break;
+                  }
+                  if (
                     attempt >= (options.retryInvalidOutput ?? 0) ||
                     !retryableOutputs.has(errorCode)
                   )
@@ -527,6 +593,7 @@ export async function runContext(
                   );
                 }
               }
+              if (!output) continue;
               const validOutput = output,
                 outputHash = contextRecoveryDigest(raw);
               const imported = importTail.then(async () => {
@@ -575,6 +642,7 @@ export async function runContext(
                     (c) => c.needsContext,
                   ).length,
                 };
+                delete progress.quarantined?.[entry.packetId];
                 delete progress.failure;
                 checkpoint();
               });
@@ -601,7 +669,11 @@ export async function runContext(
   } finally {
     options.signal?.removeEventListener("abort", abort);
   }
-  return { code, progress, counts: counts() };
+  return {
+    code: code || (Object.keys(progress.quarantined ?? {}).length ? 1 : 0),
+    progress,
+    counts: counts(),
+  };
 }
 if (
   process.argv[1] &&

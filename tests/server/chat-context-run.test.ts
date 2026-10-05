@@ -175,6 +175,10 @@ function runnerFor(f: ReturnType<typeof fixture>, calls: Launch[]): Runner {
 
 it("bounds concurrency and packet limits without accepting extra flags", () => {
   expect(parseContextOptions([])).toEqual({ concurrency: 2 });
+  expect(parseContextOptions(["--quarantine-invalid-context", "1"])).toEqual({
+    concurrency: 2,
+    quarantineInvalidContext: true,
+  });
   expect(
     parseContextOptions(["--concurrency", "4", "--limit-packets", "2"]),
   ).toEqual({ concurrency: 4, limitPackets: 2 });
@@ -200,6 +204,8 @@ it("bounds concurrency and packet limits without accepting extra flags", () => {
     ["--limit-packets"],
     ["--repair-relevant", "1"],
     ["--retry-invalid-output", "3"],
+    ["--quarantine-invalid-context"],
+    ["--quarantine-invalid-context", "2"],
     ["--packet-ids"],
     ["--packet-ids", " "],
     ["--packet-ids", "--concurrency", "2"],
@@ -542,6 +548,188 @@ it.each([
     expect(readFileSync(file, "utf8")).toBe(before);
   },
 );
+
+it.each(["reversed", "unsupplied", "nontarget", "duplicate-context"])(
+  "quarantines cached %s privately, reuses 89 steps and continues ready packets",
+  async (kind) => {
+    const f = fixture(92),
+      calls: Launch[] = [],
+      runner = runnerFor(f, calls);
+    if (kind === "unsupplied" || kind === "nontarget") {
+      const input = f.inputs[89];
+      input.blocks[0].targetIds =
+        kind === "unsupplied" ? [120, 121, 123] : [120, 123];
+      input.packetId = hash({
+        instructions: input.instructions,
+        blocks: input.blocks,
+      });
+    }
+    f.prepare();
+    const steps = Object.fromEntries(
+      f.inputs.slice(0, 89).map((input) => {
+        const raw = JSON.stringify(output(input));
+        writeFileSync(join(f.directory, `${input.packetId}.output.json`), raw);
+        return [
+          input.packetId,
+          {
+            inputHash: contextRecoveryDigest(JSON.stringify(input)),
+            outputHash: contextRecoveryDigest(raw),
+            candidates: 0,
+            targets: 2,
+            needsContext: 2,
+            needsContextCandidates: 0,
+          },
+        ];
+      }),
+    );
+    write(join(f.pipeline, "context-progress.json"), { version: 1, steps });
+    const input = f.inputs[89],
+      file = join(f.directory, `${input.packetId}.output.json`),
+      inputFile = join(f.directory, `${input.packetId}.input.json`),
+      receiptFile = join(f.pipeline, "synthetic-existing-receipt.json");
+    const bad = output(input);
+    bad.blocks[0].contextIds = [];
+    bad.blocks[0].noncandidateRanges =
+      kind === "reversed"
+        ? [[121, 120]]
+        : kind === "unsupplied" || kind === "nontarget"
+          ? [[120, 123]]
+          : [];
+    if (kind === "duplicate-context") bad.blocks[0].contextIds = [120, 120];
+    write(file, bad);
+    writeFileSync(receiptFile, "synthetic opaque existing receipt bytes");
+    write(
+      join(f.directory, `${f.inputs[90].packetId}.output.json`),
+      output(f.inputs[90]),
+    );
+    const original = readFileSync(file),
+      originalInput = readFileSync(inputFile),
+      originalReceipt = readFileSync(receiptFile);
+    const options = {
+      root: f.root,
+      concurrency: 1,
+      quarantineInvalidContext: true,
+      retryInvalidOutput: 2,
+    };
+    calls.length = 0;
+    const result = await runContext(options, runner);
+    expect(result.code).toBe(1);
+    expect(result.progress.steps).toMatchObject(steps);
+    expect(result.progress.steps[input.packetId]).toBeUndefined();
+    expect(result.progress.quarantined?.[input.packetId]).toEqual({
+      inputHash: contextRecoveryDigest(originalInput.toString()),
+      outputHash: contextRecoveryDigest(original.toString()),
+      errorCode:
+        kind === "duplicate-context"
+          ? "invalid-output-dispositions"
+          : "invalid-context-run-output",
+      targets: input.blocks[0].targetIds.length,
+      privateOnly: true,
+      complete: false,
+    });
+    expect(result.counts).toMatchObject({
+      importedPackets: 91,
+      quarantinedPackets: 1,
+      quarantinedTargets: input.blocks[0].targetIds.length,
+    });
+    expect(calls.filter((c) => command(c).args[0] === "import")).toHaveLength(
+      2,
+    );
+    expect(
+      calls.filter((c) => command(c).script === "chat-codex-run.ts"),
+    ).toHaveLength(1);
+    expect(readFileSync(file)).toEqual(original);
+    expect(readFileSync(inputFile)).toEqual(originalInput);
+    expect(readFileSync(receiptFile)).toEqual(originalReceipt);
+    calls.length = 0;
+    const replay = await runContext(options, runner);
+    expect(replay.code).toBe(1);
+    expect(replay.progress).toEqual(result.progress);
+    expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
+    // The default failure contract still rejects the held output.
+    const strict = await runContext({ root: f.root, concurrency: 1 }, runner);
+    expect(strict.code).toBe(1);
+    expect(strict.progress.failure?.errorCode).toBe(
+      result.progress.quarantined?.[input.packetId].errorCode,
+    );
+    // A hold cannot hide changed evidence on subsequent opt-in runs.
+    writeFileSync(file, `${original.toString()} `);
+    calls.length = 0;
+    const changed = await runContext(options, runner);
+    expect(changed.progress.failure?.errorCode).toBe(
+      "context-run-snapshot-mismatch",
+    );
+    expect(calls.map(command).map((c) => c.args[0])).toEqual(["prepare"]);
+  },
+  60_000,
+);
+
+it.each([
+  "timeout",
+  "account-unavailable-or-changed",
+  "batch-proxy-budget-boundary",
+  "invalid-context-run-output",
+])(
+  "quarantine never converts runner failure %s into a semantic hold",
+  async (errorCode) => {
+    const f = fixture(2),
+      calls: Launch[] = [],
+      base = runnerFor(f, calls);
+    const result = await runContext(
+      { root: f.root, concurrency: 1, quarantineInvalidContext: true },
+      async (launch) => {
+        if (command(launch).script === "chat-codex-run.ts") {
+          calls.push(launch);
+          return { code: 1, errorCode };
+        }
+        return base(launch);
+      },
+    );
+    expect(result.code).toBe(1);
+    expect(result.progress.quarantined).toBeUndefined();
+    expect(result.progress.failure?.script).toBe("chat-codex-run.ts");
+    expect(result.counts.importedPackets).toBe(0);
+    expect(calls.map(command).map((c) => c.args[0])).toEqual([
+      "prepare",
+      "candidate",
+    ]);
+  },
+);
+
+it("quarantine bounds two fresh synthetic calls without retrying invalid output", async () => {
+  const f = fixture(3),
+    calls: Launch[] = [],
+    base = runnerFor(f, calls);
+  const result = await runContext(
+    {
+      root: f.root,
+      concurrency: 1,
+      limitPackets: 2,
+      retryInvalidOutput: 2,
+      quarantineInvalidContext: true,
+    },
+    async (launch) => {
+      const value = await base(launch);
+      const c = command(launch);
+      if (c.script === "chat-codex-run.ts") {
+        const input = read(c.args[1]),
+          bad = output(input);
+        bad.blocks[0].contextIds = [120, 120];
+        write(c.args[2], bad);
+      }
+      return value;
+    },
+  );
+  expect(result.code).toBe(1);
+  expect(result.counts).toMatchObject({
+    importedPackets: 0,
+    quarantinedPackets: 2,
+  });
+  expect(
+    calls.filter((c) => command(c).script === "chat-codex-run.ts"),
+  ).toHaveLength(2);
+  expect(calls.filter((c) => command(c).args[0] === "import")).toHaveLength(0);
+});
 
 it("explicit bounded retry preserves conflicting output and imports only a new actual runner result", async () => {
   const f = fixture(1),
