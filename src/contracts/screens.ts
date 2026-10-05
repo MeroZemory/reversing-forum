@@ -6,6 +6,7 @@ import type {
   PostDetail,
   PostStatus,
   PostSummary,
+  PostPurpose,
 } from "@/lib/types";
 
 export type SearchParams = Record<string, string | string[] | undefined>;
@@ -30,6 +31,12 @@ export type FeedScreenData = {
     pageCount: number;
   };
   topics: { tag: string; count: number }[];
+  openCount: number;
+  openPreview: PostSummary[];
+  topTopics: { tag: string; count: number }[];
+  purposeCounts: Record<PostPurpose, number>;
+  matchingTopic?: { tag: string; count: number };
+  questionTopics?: { tag: string; count: number }[];
   from: string;
   writeHref: string;
 };
@@ -42,6 +49,7 @@ export type ResourceGuide = {
   posts: PostSummary[];
 };
 export type ResourcesScreenData = {
+  topics: { tag: string; count: number }[];
   guides: ResourceGuide[];
   selected?: ResourceGuide;
   feed: FeedScreenData;
@@ -63,6 +71,7 @@ export type PostScreenData = {
   publicUrl: string;
   editHref?: string;
   relatedPosts?: { id: string; title: string }[];
+  sameTopicPosts?: PostSummary[];
   publicationNotice?: {
     reason:
       | "duplicate"
@@ -91,6 +100,7 @@ export type NewPostScreenData = {
   viewerId: string;
   initialPurpose?: FeedFilters["purpose"];
   initialTag?: string;
+  initialTitle?: string;
   from: string;
 };
 export type EditPostScreenData = PostFormProps & {

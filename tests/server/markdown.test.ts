@@ -10,10 +10,11 @@ describe("research content rendering", () => {
         body: "# 분석 과정\n\n```asm\ncmp eax, 42\n```\n\n|주소|명령|\n|---|---|\n|0x10|ret|",
       }),
     );
-    expect(html).toContain("<h2>분석 과정</h2>");
+    expect(html).toContain('<h2 id="body-section-1">분석 과정</h2>');
     expect(html).not.toContain("<h1>");
-    expect(html).toContain('class="language-asm"');
-    expect(html).toContain("cmp eax, 42");
+    expect(html).toContain("코드 블록 · 어셈블리");
+    expect(html).toContain('data-token="register">eax</span>');
+    expect(html).toContain('data-token="number">42</span>');
     expect(html).toContain("<table>");
   });
   it("keeps untrusted HTML and script links out of executable markup and avoids remote image loads", () => {

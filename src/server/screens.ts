@@ -9,9 +9,10 @@ import {
   listMyPosts,
   listPostPage,
   listPublicTopics,
+  listAllPublicTopics,
 } from "./forum";
 import {
-  feedHref,
+  feedPurposes,
   readFeedFilters,
   safeFeedReturn,
   safeListReturn,
@@ -23,6 +24,7 @@ import { relatedPublicPosts } from "./duplicates/index";
 import { publicationNotice } from "./publication-notice";
 import { listResourcePosts, resourceGuides } from "./resources";
 import { currentResourceSelection } from "./resource-curation";
+import { canonicalTopic } from "@/lib/topic-aliases";
 import type { Author, PostStatus, PostSummary, PostDetail } from "@/lib/types";
 import type {
   AuthScreenData,
@@ -48,6 +50,14 @@ function summary(post: PostSummary): PostSummary {
     tags: post.tags,
     createdAt: post.createdAt,
     commentCount: post.commentCount,
+    ...(post.author.role === "editor" && typeof post.recordPeriod === "string"
+      ? { recordPeriod: post.recordPeriod }
+      : {}),
+    ...(post.author.role === "editor" &&
+    Number.isSafeInteger(post.sourceCount) &&
+    post.sourceCount! >= 0
+      ? { sourceCount: post.sourceCount }
+      : {}),
     author: {
       id: post.author.id,
       name: post.author.name,
@@ -80,14 +90,33 @@ export async function loadViewer(): Promise<Author | null> {
   return viewer ? { id: viewer.id, name: viewer.name } : null;
 }
 
-export function loadFeedScreen(params: SearchParams): FeedScreenData {
-  const filters = readFeedFilters(params);
+export function loadSiteNavigation() {
+  return {
+    topics: listPublicTopics(14),
+    openCount: listPostPage({ open: true, pageSize: 1 }).total,
+  };
+}
+
+export function loadFeedScreen(
+  params: SearchParams,
+  options: {
+    title?: string;
+    basePath?: "/" | "/questions";
+    open?: boolean;
+  } = {},
+): FeedScreenData {
+  const filters = {
+    ...readFeedFilters(params),
+    ...(options.open ? { open: true } : {}),
+  };
+  const basePath = options.basePath ?? "/";
   let result = listPostPage(filters);
   let compactEditorial: FeedScreenData["compactEditorial"];
   if (
     !filters.purpose &&
     !filters.tag &&
     !filters.query &&
+    !filters.open &&
     result.total >= 30
   ) {
     const publicPosts = listResourcePosts();
@@ -122,11 +151,14 @@ export function loadFeedScreen(params: SearchParams): FeedScreenData {
       }
     }
   }
-  const from = feedHref({ ...filters, page: result.page });
+  const from = listHref(basePath, { ...filters, page: result.page });
   const writeParams = new URLSearchParams({ from });
   if (filters.purpose) writeParams.set("purpose", filters.purpose);
   if (filters.tag) writeParams.set("tag", filters.tag);
   return {
+    basePath,
+    ...(options.title ? { title: options.title } : {}),
+    ...feedDiscovery(filters),
     ...(compactEditorial ? { compactEditorial } : {}),
     filters,
     result: {
@@ -139,6 +171,46 @@ export function loadFeedScreen(params: SearchParams): FeedScreenData {
     topics: listPublicTopics(12).map(({ tag, count }) => ({ tag, count })),
     from,
     writeHref: `/new?${writeParams}`,
+  };
+}
+
+function feedDiscovery(filters: FeedScreenData["filters"]) {
+  const open = listPostPage({ open: true, pageSize: 5 });
+  const matchingTopic = filters.query
+    ? listAllPublicTopics().find(
+        (topic) =>
+          canonicalTopic(topic.tag).toLowerCase() ===
+          canonicalTopic(filters.query!).toLowerCase(),
+      )
+    : undefined;
+  const questionCounts = new Map<string, number>();
+  if (filters.open) {
+    for (const post of listResourcePosts({ open: "1", purpose: "question" })) {
+      for (const topic of new Set(post.tags.map(canonicalTopic)))
+        questionCounts.set(topic, (questionCounts.get(topic) ?? 0) + 1);
+    }
+  }
+  return {
+    ...(matchingTopic ? { matchingTopic } : {}),
+    ...(filters.open
+      ? {
+          questionTopics: [...questionCounts]
+            .map(([tag, count]) => ({ tag, count }))
+            .sort(
+              (a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "ko"),
+            )
+            .slice(0, 8),
+        }
+      : {}),
+    openCount: open.total,
+    openPreview: open.posts.map(summary),
+    topTopics: listPublicTopics(14),
+    purposeCounts: Object.fromEntries(
+      feedPurposes.map((purpose) => [
+        purpose,
+        listPostPage({ ...filters, purpose, page: 1, pageSize: 1 }).total,
+      ]),
+    ) as FeedScreenData["purposeCounts"],
   };
 }
 
@@ -157,7 +229,7 @@ export function loadResourcesScreen(
     ? new Set(selected.posts.map((post) => post.id))
     : null;
   const matching =
-    filters.purpose || filters.tag || filters.query
+    filters.purpose || filters.tag || filters.query || filters.open
       ? listResourcePosts(params).map(summary)
       : allPosts;
   const posts = allowed
@@ -172,12 +244,14 @@ export function loadResourcesScreen(
   if (filters.purpose) writeParams.set("purpose", filters.purpose);
   if (filters.tag) writeParams.set("tag", filters.tag);
   return {
+    topics: listAllPublicTopics(),
     guides: guides.map((guide) => ({
       ...guide,
       posts: guide.posts.slice(0, 3),
     })),
     selected: selected ? { ...selected, posts: [] } : undefined,
     feed: {
+      ...feedDiscovery(filters),
       basePath,
       filters,
       from,
@@ -194,13 +268,17 @@ export function loadResourcesScreen(
         pageCount,
       },
       topics: [
-        ...new Set((selected?.posts ?? allPosts).flatMap((post) => post.tags)),
+        ...new Set(
+          (selected?.posts ?? allPosts).flatMap((post) =>
+            post.tags.map(canonicalTopic),
+          ),
+        ),
       ]
         .slice(0, 12)
         .map((tag) => ({
           tag,
           count: (selected?.posts ?? allPosts).filter((post) =>
-            post.tags.includes(tag),
+            post.tags.some((value) => canonicalTopic(value) === tag),
           ).length,
         })),
     },
@@ -242,6 +320,13 @@ export async function loadPostScreen(
       ? [{ id: found.id, title: found.title }]
       : [];
   });
+  const sameTopicPosts = published
+    ? sameTopic(
+        post,
+        listResourcePosts(),
+        new Set(relatedPosts.map((item) => item.id)),
+      )
+    : [];
   let editHref: string | undefined;
   if (viewer?.id === post.author.id) {
     try {
@@ -273,8 +358,44 @@ export async function loadPostScreen(
     publicUrl: `${siteUrl()}/posts/${post.id}`,
     ...(editHref ? { editHref } : {}),
     relatedPosts,
+    sameTopicPosts,
     publicationNotice: published ? null : publicationNotice(id, viewer?.id),
   };
+}
+
+function sameTopic(
+  post: PostSummary,
+  posts: PostSummary[],
+  excluded: Set<string>,
+): PostSummary[] {
+  const mine = new Set(
+    post.tags.map((tag) => canonicalTopic(tag).toLowerCase()),
+  );
+  const counts = new Map<string, number>();
+  const topics = (item: PostSummary) =>
+    new Set(item.tags.map((tag) => canonicalTopic(tag).toLowerCase()));
+  for (const item of posts) {
+    for (const tag of topics(item)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  return posts
+    .filter((item) => item.id !== post.id && !excluded.has(item.id))
+    .map((item) => ({
+      item,
+      score: [...topics(item)].reduce(
+        (score, tag) =>
+          score + (mine.has(tag) ? 1 / Math.log2(1 + counts.get(tag)!) : 0),
+        0,
+      ),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.item.createdAt.localeCompare(a.item.createdAt) ||
+        a.item.id.localeCompare(b.item.id),
+    )
+    .slice(0, 3)
+    .map(({ item }) => summary(item));
 }
 
 export async function loadMyPostsScreen(
@@ -319,6 +440,9 @@ export async function loadNewPostScreen(
   const rawFrom = typeof params.from === "string" ? params.from : undefined;
   const from = safeListReturn(rawFrom);
   const writeParams = new URLSearchParams();
+  const initialTitle =
+    typeof params.title === "string" ? params.title.slice(0, 160) : undefined;
+  if (initialTitle) writeParams.set("title", initialTitle);
   if (filters.purpose) writeParams.set("purpose", filters.purpose);
   if (filters.tag) writeParams.set("tag", filters.tag);
   if (params.from) writeParams.set("from", from);
@@ -345,6 +469,7 @@ export async function loadNewPostScreen(
       viewerId: viewer.id,
       initialPurpose: filters.purpose,
       initialTag: filters.tag,
+      ...(initialTitle !== undefined ? { initialTitle } : {}),
       from,
     },
   };

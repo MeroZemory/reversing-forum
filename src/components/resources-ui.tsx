@@ -1,27 +1,68 @@
+"use client";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { PostSummary } from "@/lib/types";
-import { listHref } from "@/lib/resource-navigation";
-import { formatDate } from "@/lib/format";
-import { EditorialAuthor } from "./ui/editorial-author";
-import { KindBadge } from "./ui/kind-badge";
-import { PostLink } from "./feed-navigation";
+import { readFeedFilters } from "@/lib/feed-navigation";
+import { PostList } from "./post-list";
+import styles from "./community-layout.module.css";
 
-export function SiteEntrances({ active }: { active: "feed" | "resources" }) {
+export function SiteEntrances({
+  active,
+  desktop = false,
+  placement,
+  openCount,
+}: {
+  active?: "feed" | "questions" | "resources";
+  desktop?: boolean;
+  placement?: "header";
+  openCount?: number;
+}) {
+  const pathname = usePathname();
+  // Entrances now belong to the shared header. Legacy page call sites stay
+  // compatible while independently owned screens migrate, without a second nav.
+  if (!desktop && placement !== "header") return null;
+  const current =
+    active ??
+    (pathname === "/questions"
+      ? "questions"
+      : pathname.startsWith("/resources")
+        ? "resources"
+        : pathname === "/"
+          ? "feed"
+          : undefined);
   return (
-    <nav className="site-entrances" aria-label="사이트 둘러보기">
-      <Link href="/" aria-current={active === "feed" ? "page" : undefined}>
+    <nav
+      className={desktop ? styles.desktopNav : styles.subNav}
+      aria-label="사이트 둘러보기"
+    >
+      <Link href="/" aria-current={current === "feed" ? "page" : undefined}>
         최신 글
       </Link>
       <Link
-        href="/resources"
-        aria-current={active === "resources" ? "page" : undefined}
+        href="/questions"
+        aria-label="답을 기다리는 질문"
+        aria-current={current === "questions" ? "page" : undefined}
       >
-        자료 길잡이
+        <span className={styles.longNav}>답을 기다리는 질문</span>
+        <span className={styles.shortNav}>답 기다림</span>
+        {!desktop && openCount !== undefined && (
+          <span aria-hidden="true" className={styles.navCount}>
+            {openCount}
+          </span>
+        )}
+      </Link>
+      <Link
+        href="/resources"
+        aria-current={current === "resources" ? "page" : undefined}
+      >
+        주제
       </Link>
     </nav>
   );
 }
-
+export function SubNav({ openCount }: { openCount?: number }) {
+  return <SiteEntrances placement="header" openCount={openCount} />;
+}
 export function ResourcePostList({
   posts,
   from,
@@ -31,44 +72,18 @@ export function ResourcePostList({
   from: string;
   basePath: string;
 }) {
-  if (!posts.length)
-    return (
-      <div className="forum-empty" role="status">
-        <div>
-          <h2>조건에 맞는 공개 글이 없습니다.</h2>
-          <p>검색어 또는 주제 조건을 바꿔 보세요.</p>
-          <Link href={basePath}>모든 조건 지우기</Link>
-        </div>
-      </div>
-    );
+  const filters = readFeedFilters(
+    Object.fromEntries(
+      new URL(from, "https://reversing-all.invalid").searchParams,
+    ),
+  );
   return (
-    <ul className="resource-posts">
-      {posts.map((post) => (
-        <li key={post.id}>
-          <div className="post-title-line">
-            <KindBadge kind={post.kind} />
-            <PostLink id={post.id} title={post.title} from={from} />
-          </div>
-          <p className="resource-excerpt">{post.excerpt}</p>
-          <div className="resource-post-meta">
-            <EditorialAuthor author={post.author} />
-            <time dateTime={post.createdAt}>{formatDate(post.createdAt)}</time>
-            <span>댓글 {post.commentCount}개</span>
-          </div>
-          <div className="post-topics">
-            {post.tags.map((tag) => (
-              <Link
-                key={tag}
-                className="topic-inline"
-                href={listHref(basePath, { tag })}
-                aria-label={`${tag} 주제 글 보기`}
-              >
-                #{tag}
-              </Link>
-            ))}
-          </div>
-        </li>
-      ))}
-    </ul>
+    <PostList
+      posts={posts}
+      filters={filters}
+      from={from}
+      basePath={basePath}
+      answer={basePath === "/questions"}
+    />
   );
 }

@@ -6,31 +6,42 @@ import { formatDate } from "@/lib/format";
 import { ActionLink } from "../ui/action";
 import { KindBadge } from "../ui/kind-badge";
 import { FeedScrollRestoration, PostLink } from "../feed-navigation";
-import {
-  StatusBadge,
-  statusLabels,
-  statusDescriptions,
-} from "../ui/status-badge";
+import styles from "./my-posts-screen.module.css";
+
+const statusLabels: Record<PostStatus, string> = {
+  published: "공개",
+  pending: "확인 중",
+  held: "공개 보류",
+};
+const statusDescriptions: Record<PostStatus, string> = {
+  published: "누구나 읽을 수 있는 글이에요.",
+  pending: "공개 전 확인이 끝나지 않아 나만 볼 수 있어요.",
+  held: "공개가 보류되어 나만 볼 수 있어요. 자동 재확인은 제공되지 않아요.",
+};
 
 export function MyPostsScreen({ data }: { data: MyPostsScreenData }) {
   const { posts, total, counts, status, returnPath, writeHref } = data;
   const statuses: PostStatus[] = ["published", "pending", "held"];
   return (
-    <div className="shell my-posts-shell">
+    <div className={`shell my-posts-shell ${styles.screen}`}>
       <FeedScrollRestoration href={returnPath} />
       <div className="page-header">
         <div>
           <h1>내가 쓴 글</h1>
         </div>
-        <ActionLink size="compact" href={writeHref}>
+        <ActionLink
+          className={styles.pageWrite}
+          size="compact"
+          href={writeHref}
+        >
           <Plus size={16} aria-hidden="true" /> 글 쓰기
         </ActionLink>
       </div>
       <p className="page-intro">
-        내가 쓴 글의 공개 상태를 확인하세요. 공개 전 확인·공개 보류 글은 나만 볼
-        수 있습니다.
+        내가 쓴 글의 공개 상태를 확인하세요. 확인 중·공개 보류 글은 나만 볼 수
+        있어요.
       </p>
-      <nav className="filter-tabs" aria-label="내 글 공개 상태">
+      <nav className={styles.filters} aria-label="내 글 공개 상태">
         <Link
           href="/me"
           className={!status ? "active" : undefined}
@@ -56,7 +67,7 @@ export function MyPostsScreen({ data }: { data: MyPostsScreenData }) {
           {status ? (
             <p>{statusDescriptions[status]}</p>
           ) : (
-            <p>공개 보류 글은 자동으로 재확인되지 않습니다.</p>
+            <p>공개 보류 글은 자동으로 재확인되지 않아요.</p>
           )}
         </div>
       )}
@@ -77,15 +88,17 @@ export function MyPostsScreen({ data }: { data: MyPostsScreenData }) {
                   {formatDate(post.createdAt)}
                 </time>
               </div>
-              <StatusBadge status={post.status} />
+              <span className={`${styles.status} ${styles[post.status]}`}>
+                {statusLabels[post.status]}
+              </span>
             </PostLink>
           ))
         ) : (
           <div className="empty-state">
             <h2>
               {total
-                ? `${status ? statusLabels[status] : "선택한 상태"} 글이 없습니다.`
-                : "아직 남긴 글이 없습니다."}
+                ? `${status ? statusLabels[status] : "선택한 상태"} 글이 없어요.`
+                : "아직 남긴 글이 없어요."}
             </h2>
             <p>
               {total

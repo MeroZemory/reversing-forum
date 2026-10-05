@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { feedHref } from "@/lib/feed-navigation";
 import { isResourcePath, listHref } from "@/lib/resource-navigation";
+import { canonicalTopic } from "@/lib/topic-aliases";
 
 export function TopicLink({
   tag,
@@ -19,9 +20,9 @@ export function TopicLink({
           ? listHref(from.split("?")[0], { tag })
           : feedHref({ tag })
       }
-      aria-label={`${tag} 주제 글 보기`}
+      aria-label={`${canonicalTopic(tag)} 주제 글 보기`}
     >
-      #{tag}
+      #{canonicalTopic(tag)}
     </Link>
   );
 }

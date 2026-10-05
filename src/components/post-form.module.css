@@ -1,0 +1,84 @@
+.form {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.form input,
+.form textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.form button {
+  min-height: 44px;
+}
+.similar {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-panel);
+}
+.similar p {
+  padding: 8px 12px;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+.similar a {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+}
+.external {
+  color: var(--color-meta);
+  font-size: var(--text-sm);
+}
+.bodyHeading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.bodyHeading label {
+  font-weight: 600;
+}
+.bodyHeading > div {
+  margin: 0;
+}
+.tools,
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tools button,
+.suggestions button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-panel);
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.tools button:disabled,
+.suggestions button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.form :global(.purpose-options) {
+  min-width: 0;
+}
+.form :global(.purpose-option) {
+  min-width: 0;
+}
+.form :global(.editor-footer) {
+  flex-wrap: wrap;
+}
+.form :global(.editor-footer) > div {
+  flex-wrap: wrap;
+}
+.form :global(.editor-preview) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

@@ -46,6 +46,8 @@ export type PostSummary = {
   author: Author;
   createdAt: string;
   commentCount: number;
+  recordPeriod?: string;
+  sourceCount?: number;
 };
 export type PostDetail = PostSummary & {
   body: string;

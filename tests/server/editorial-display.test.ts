@@ -207,7 +207,7 @@ describe("editorial display", () => {
     );
     expect(markup).toContain("별도로 작성한 안내 자료");
     expect(markup).toContain("기간 미확인");
-    expect(markup).toContain("확인 상태가 기록되지 않았습니다.");
+    expect(markup).toContain("확인 상태가 기록되지 않았어요.");
     expect(markup).not.toContain("과거 카톡 대화를 가공한 자료");
     const ordinary = renderToStaticMarkup(
       createElement(PostScreen, {
@@ -273,15 +273,18 @@ describe("editorial display", () => {
     expect(markup).toContain("Rédaction");
     expect(markup).toContain("Équipe");
     const aside = markup.match(/<aside[^>]*>([\s\S]*?)<\/aside>/)![1];
-    const [collapsed, detail] = aside.split("<details>");
+    const collapsed = aside;
     expect(markup).toContain('aria-label="자료 출처와 확인 상태"');
     expect(collapsed).toContain("과거 카톡 편집 자료");
-    expect(collapsed).toContain(`과거 기록 기간 · ${provenance.period}`);
-    expect(collapsed).toContain("기록 시점과 웹 게시일은 다릅니다.");
-    expect(collapsed).toContain("현재 내용·효력은 별도 확인이 필요합니다.");
-    expect(collapsed).not.toContain(provenance.verificationSummary);
-    expect(detail).toContain("<summary>확인 내역</summary>");
-    expect(detail).toContain(provenance.verificationSummary);
+    expect(collapsed).toContain(
+      `<dt>과거 기록 기간</dt><dd>${provenance.period}</dd>`,
+    );
+    expect(collapsed).toContain("기록 시점과 웹 게시일은 달라요.");
+    expect(collapsed).toContain("현재 내용·효력은 별도 확인이 필요해요.");
+    expect(markup).toMatch(/<aside[^>]*hidden=""/);
+    expect(markup).toContain('aria-expanded="false"');
+    expect(collapsed).toContain("<dt>확인 내역</dt>");
+    expect(collapsed).toContain(provenance.verificationSummary);
     expect(markup).not.toMatch(/<details[^>]*\sopen/);
     expect(markup).toContain("댓글 흐름");
     expect(markup).not.toContain("private-");

@@ -7,6 +7,7 @@ import type {
   CommentSectionViewProps,
 } from "@/lib/interaction-types";
 import { ActionLink, Button } from "./ui/action";
+import { MarkdownBody } from "./markdown-body";
 export function CommentFormView({
   parentId,
   label,
@@ -57,7 +58,11 @@ export function CommentFormView({
         onChange={(event) => {
           setBody(event.currentTarget.value);
         }}
+        aria-describedby={`${inputId}-hint`}
       />
+      <p id={`${inputId}-hint`} className="field-hint">
+        코드는 ```로 감싸면 읽기 쉬워요. 마크다운을 쓸 수 있어요.
+      </p>
       {error && (
         <p role="alert" className="form-error" ref={errorRef} tabIndex={-1}>
           {error}
@@ -83,7 +88,13 @@ export function CommentFormView({
       <div className="comment-form-footer">
         <span>{body.length.toLocaleString("ko-KR")} / 2,000자</span>
         <Button type="submit" size="compact" disabled={busy}>
-          {busy ? "등록 중…" : parentId ? "답글 등록" : "댓글 등록"}
+          {busy
+            ? "등록 중…"
+            : parentId
+              ? "답글 등록"
+              : label === "답변 작성"
+                ? "답변 등록"
+                : "댓글 등록"}
           <Send size={14} aria-hidden="true" />
         </Button>
       </div>
@@ -101,6 +112,7 @@ export function CommentSectionView({
   renderComposer,
 }: CommentSectionViewProps) {
   const roots = comments.filter((comment) => !comment.parentId);
+  const question = purpose === "question";
   function closeReply(id: string) {
     setReplyingTo(null);
     requestAnimationFrame(() =>
@@ -130,7 +142,12 @@ export function CommentSectionView({
               {formatDate(comment.createdAt)}
             </time>
           </div>
-          <p className="comment-body">{comment.body}</p>
+          <div className="comment-body">
+            <MarkdownBody
+              body={comment.body}
+              headingPrefix={`comment-${comment.id}`}
+            />
+          </div>
           {viewer && !reply && (
             <Button
               id={`reply-${comment.id}`}
@@ -161,13 +178,14 @@ export function CommentSectionView({
 
   return (
     <section
-      id="comments"
+      id={question ? "answers" : "comments"}
       className="comments-section"
       aria-labelledby="comments-title"
     >
       <h2 id="comments-title">
-        댓글 <span>{comments.length}</span>
+        {question ? "답변" : "댓글"} <span>{comments.length}</span>
       </h2>
+      {question && <span id="comments" aria-hidden="true" />}
       <div className="comments-list">
         {roots.map((root) => (
           <div className="comment-thread" key={root.id}>
@@ -179,17 +197,28 @@ export function CommentSectionView({
         ))}
       </div>
       {comments.length === 0 && (
-        <p className="no-comments">아직 댓글이 없습니다.</p>
+        <p className="no-comments">
+          {question
+            ? "아직 답변이 없어요. 확인한 원인이나 시도할 방법을 알려 주세요."
+            : "아직 댓글이 없어요."}
+        </p>
       )}
       <div className="comment-composer">
         {viewer ? (
-          renderComposer({ label: "댓글 작성", placeholder })
+          renderComposer({
+            label: question ? "답변 작성" : "댓글 작성",
+            placeholder,
+          })
         ) : (
           <div className="comment-login">
             <MessageSquare size={18} aria-hidden="true" />
-            <p>댓글로 질문에 답하거나 의견을 나눠 주세요.</p>
+            <p>
+              {question
+                ? "한 줄 답도 도움이 돼요."
+                : "재현한 결과나 의견을 나눠 주세요."}
+            </p>
             <ActionLink variant="secondary" size="compact" href={loginHref}>
-              로그인하고 댓글 쓰기
+              {question ? "로그인하고 답변 쓰기" : "로그인하고 댓글 쓰기"}
             </ActionLink>
           </div>
         )}

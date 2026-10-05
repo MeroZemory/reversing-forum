@@ -11,6 +11,7 @@ export type FeedFilters = {
   tag?: string;
   query?: string;
   page?: number;
+  open?: boolean;
 };
 export const feedPurposes: PostPurpose[] = ["question", "share", "discussion"];
 
@@ -28,6 +29,7 @@ export function readFeedFilters(
       : undefined;
   const page = Number(value("page"));
   return {
+    ...(value("open") === "1" ? { open: true } : {}),
     purpose,
     tag: value("tag").trim().slice(0, 24) || undefined,
     query: value("q").trim().slice(0, 200) || undefined,

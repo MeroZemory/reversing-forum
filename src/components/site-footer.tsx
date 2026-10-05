@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeSelector } from "@/components/theme-selector";
 export function SiteFooter() {
   return (
     <footer className="shell site-footer">
@@ -7,6 +8,7 @@ export function SiteFooter() {
         <span aria-hidden="true"> · </span>
         <Link href="/report">삭제·이의 요청</Link>
       </nav>
+      <ThemeSelector />
     </footer>
   );
 }

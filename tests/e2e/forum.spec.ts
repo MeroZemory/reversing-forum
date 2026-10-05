@@ -1,4 +1,4 @@
-import { test, expect, type TestInfo } from "@playwright/test";
+import { test, expect, type Page, type TestInfo } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 import { basename, dirname, resolve } from "node:path";
@@ -13,6 +13,34 @@ function isolatedDatabase(info: TestInfo) {
 }
 
 const createdPostIds: string[] = [];
+
+test.beforeAll(async ({ request }) => {
+  // A filtered run skips the earlier API tests that normally compile this route.
+  // Keep cold dev compilation outside the member UI case's timeout.
+  expect((await request.get("/api/posts")).status()).toBe(200);
+});
+
+async function openSearch(page: Page) {
+  const input = page.getByRole("textbox", { name: "글 검색", exact: true });
+  if (!(await input.isVisible())) {
+    const searchTrigger = page
+      .getByRole("banner")
+      .getByRole("button", { name: "검색", exact: true });
+    await expect(searchTrigger).toBeInViewport();
+    await searchTrigger.click({ scroll: "none" });
+  }
+  return page.getByRole("textbox", { name: "글 검색", exact: true });
+}
+
+async function expectSearchValue(page: Page, value: string) {
+  await expect(await openSearch(page)).toHaveValue(value);
+  const dialog = page.getByRole("dialog", { name: "글 검색", exact: true });
+  if (await dialog.isVisible()) {
+    await dialog
+      .getByRole("button", { name: "검색 닫기", exact: true })
+      .click();
+  }
+}
 
 test("작성자는 같은 글의 이전 내용으로 되돌리며 검수 이력을 유지한다", async ({
   request,
@@ -234,7 +262,9 @@ test("비공개 신고 접수는 회원 세션을 확인하고 운영자에게�
   await page
     .getByRole("button", { name: "운영자에게 보내기", exact: true })
     .click();
-  await expect(page.getByRole("status")).toContainText("접수했습니다");
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
+    "접수했습니다",
+  );
   const row = database
     .prepare("SELECT reporter_id,post_id,detail FROM reports WHERE post_id=?")
     .get(result.id) as { reporter_id: string; post_id: string; detail: string };
@@ -329,7 +359,9 @@ test("인증 링크 결과에서 재요청 폼 대신 로그인·계속하기를
   );
   await page.getByRole("button", { name: "메일 요청", exact: true }).click();
   expect((await resend).status()).toBe(200);
-  await expect(page.getByRole("status")).toContainText("미인증 이메일에만");
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
+    "미인증 이메일에만",
+  );
   expect(readMail().filter((item) => item.email === email)).toHaveLength(2);
   const message = readMail().findLast((item) => item.email === email);
   expect(message?.url).toBeTruthy();
@@ -360,7 +392,7 @@ test("인증 링크 결과에서 재요청 폼 대신 로그인·계속하기를
   });
   expect(login.ok()).toBe(true);
   await page.goto("/verify-email?returnTo=%2Fnew");
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
     "이미 인증되어 있습니다",
   );
   await expect(
@@ -371,7 +403,7 @@ test("인증 링크 결과에서 재요청 폼 대신 로그인·계속하기를
     headers: { Origin: origin },
   });
   await page.goto(message.url);
-  await expect(page.getByRole("alert")).toContainText(
+  await expect(page.getByRole("main").getByRole("alert")).toContainText(
     "인증 링크가 만료되었거나 이미 사용되었습니다",
   );
   await expect(page.getByRole("button", { name: "메일 요청" })).toBeVisible();
@@ -384,7 +416,9 @@ test("인증 링크 결과에서 재요청 폼 대신 로그인·계속하기를
   );
   await page.getByRole("button", { name: "메일 요청", exact: true }).click();
   expect((await repeatedRequest).status()).toBe(200);
-  await expect(page.getByRole("status")).toContainText("이미 인증했다면");
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
+    "이미 인증했다면",
+  );
   expect(readMail().filter((item) => item.email === email)).toHaveLength(2);
 });
 test.afterEach(async ({}, info) => {
@@ -451,7 +485,9 @@ test("목록 탭·검색·뒤로가기의 상태와 스크롤을 유지한다", 
       await page.setViewportSize({ width, height: 700 });
       await page.goto("/");
       await expect(
-        page.getByRole("link", { name: "글 쓰기", exact: true }),
+        page
+          .getByRole("link", { name: "글 쓰기", exact: true })
+          .filter({ visible: true }),
       ).toHaveCount(1);
       await expect(page.locator('a[href="/login"]')).toHaveCount(1);
       await expect(page.locator('a[href="/register"]')).toHaveCount(1);
@@ -465,7 +501,7 @@ test("목록 탭·검색·뒤로가기의 상태와 스크롤을 유지한다", 
         "최신 글",
       );
       await page.screenshot({
-        path: `test-results/design-home-${width}.png`,
+        path: `data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/design-home-${width}.png`,
         caret: "initial",
       });
       const skipLink = page.getByRole("link", { name: "본문으로 바로가기" });
@@ -479,12 +515,12 @@ test("목록 탭·검색·뒤로가기의 상태와 스크롤을 유지한다", 
         name: "글 목적",
         exact: true,
       });
-      await expect(tabs.getByRole("link")).toHaveText([
-        "전체",
-        "질문",
-        "공유",
-        "자유",
-      ]);
+      await expect(tabs.getByRole("link")).toHaveCount(4);
+      for (const [index, name] of ["전체", "질문", "공유", "자유"].entries()) {
+        await expect(tabs.getByRole("link").nth(index)).toHaveAccessibleName(
+          name,
+        );
+      }
       const analysis = tabs.getByRole("link", { name: "공유", exact: true });
       const box = await analysis.boundingBox();
       expect(box).not.toBeNull();
@@ -503,34 +539,36 @@ test("목록 탭·검색·뒤로가기의 상태와 스크롤을 유지한다", 
       await expect(page).toHaveURL(/purpose=share/);
       await expect(analysis).toHaveAttribute("aria-current", "page");
       await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(before);
-      await page.getByRole("textbox", { name: "글 검색" }).fill("목록검수");
-      await page.getByRole("button", { name: "검색", exact: true }).click();
+      await (await openSearch(page)).fill("목록검수");
+      const searchButton = page
+        .getByRole("search")
+        .getByRole("button", { name: "검색", exact: true });
+      // The sticky header is already visible; avoid Playwright scrolling it first.
+      await expect(searchButton).toBeInViewport();
+      await searchButton.click({ scroll: "none" });
       await expect(page).toHaveURL(/purpose=share&q=/);
       await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(before);
       await expect(
-        page.getByRole("table", { name: "게시글 목록" }),
+        page.getByRole("list", { name: "게시글 목록" }),
       ).toBeVisible();
       await tabs.getByRole("link", { name: "질문", exact: true }).click();
       await expect(page).toHaveURL(/purpose=question&q=/);
-      await expect(page.getByRole("textbox", { name: "글 검색" })).toHaveValue(
-        "목록검수",
-      );
+      await expectSearchValue(page, "목록검수");
       await expect(skipLink).not.toBeInViewport();
       await expect(
-        page.getByRole("heading", { name: "검색 결과", exact: true }),
+        page.getByRole("heading", {
+          name: "‘목록검수’ 검색 결과",
+          exact: true,
+        }),
       ).toBeVisible();
       await page
         .getByRole("link", { name: "검색어 지우기", exact: true })
         .click();
       await expect(page).toHaveURL(/\?purpose=question$/);
-      await expect(page.getByRole("textbox", { name: "글 검색" })).toHaveValue(
-        "",
-      );
+      await expectSearchValue(page, "");
       await page.goBack();
       await expect(page).toHaveURL(/purpose=question&q=/);
-      await expect(page.getByRole("textbox", { name: "글 검색" })).toHaveValue(
-        "목록검수",
-      );
+      await expectSearchValue(page, "목록검수");
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -540,7 +578,7 @@ test("목록 탭·검색·뒤로가기의 상태와 스크롤을 유지한다", 
         window.scrollTo({ top: 0, behavior: "instant" }),
       );
       await page.screenshot({
-        path: `test-results/forum-populated-${width}.png`,
+        path: `data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/forum-populated-${width}.png`,
         fullPage: true,
         caret: "initial",
       });
@@ -571,7 +609,9 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     await expect(
-      page.getByRole("link", { name: "글 쓰기", exact: true }),
+      page
+        .getByRole("link", { name: "글 쓰기", exact: true })
+        .filter({ visible: true }),
     ).toHaveCount(1);
     const account = page.getByRole("navigation", { name: "계정", exact: true });
     await expect(
@@ -583,7 +623,9 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     for (const control of [
       account.getByRole("link", { name: "로그인", exact: true }),
       account.getByRole("link", { name: "회원가입", exact: true }),
-      page.getByRole("link", { name: "글 쓰기", exact: true }),
+      page
+        .getByRole("link", { name: "글 쓰기", exact: true })
+        .filter({ visible: true }),
       page
         .getByRole("navigation", { name: "글 목적" })
         .getByRole("link", { name: "공유", exact: true }),
@@ -600,7 +642,7 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
-    path: "test-results/home-desktop.png",
+    path: "data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/home-desktop.png",
     fullPage: true,
     caret: "initial",
   });
@@ -614,19 +656,19 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     ),
   ).toBeTruthy();
   await page.screenshot({
-    path: "test-results/home-mobile.png",
+    path: "data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/home-mobile.png",
     fullPage: true,
     caret: "initial",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
 
   await page.goto("/?purpose=share&q=missing-search-fixture");
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
     "검색어에 맞는 글이 없습니다.",
   );
   await page.getByRole("link", { name: "검색어 지우기", exact: true }).click();
   await expect(page).toHaveURL(/\?purpose=share$/);
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("main").getByRole("status")).toContainText(
     "아직 공개된 공유 글이 없습니다.",
   );
   await page.getByRole("link", { name: "전체 글 보기", exact: true }).click();
@@ -651,7 +693,7 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: `test-results/design-auth-${width}.png`,
+      path: `data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/design-auth-${width}.png`,
       caret: "initial",
     });
   }
@@ -680,17 +722,23 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
   await verifyAndLogin(page.request, origin, uiEmail);
   await page.goto("/new");
   await expect(page).toHaveURL(`${origin}/new`);
+  await page.locator(".account-menu > summary").click();
   await page
     .getByRole("navigation", { name: "계정" })
     .getByRole("link", { name: "내 글", exact: true })
     .click();
   await expect(
-    page.getByText("아직 남긴 글이 없습니다.", { exact: true }),
+    page.getByText("아직 남긴 글이 없어요.", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "글 쓰기", exact: true }),
+    page
+      .getByRole("link", { name: "글 쓰기", exact: true })
+      .filter({ visible: true }),
   ).toHaveCount(1);
-  await page.getByRole("link", { name: "글 쓰기", exact: true }).click();
+  await page
+    .getByRole("link", { name: "글 쓰기", exact: true })
+    .filter({ visible: true })
+    .click();
   await expect(page).toHaveURL(`${origin}/new?from=%2Fme`);
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -704,7 +752,7 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
       ),
     ).toBeTruthy();
     await page.screenshot({
-      path: `test-results/design-editor-${width}.png`,
+      path: `data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/design-editor-${width}.png`,
       caret: "initial",
     });
   }
@@ -775,17 +823,22 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
   ).toBeFocused();
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({
-    path: "test-results/post-desktop.png",
+    path: "data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/post-desktop.png",
     fullPage: true,
     caret: "initial",
   });
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
     const account = page.getByRole("navigation", { name: "계정" });
+    if (width < 360) {
+      await account.locator(".account-menu > summary").click();
+    }
     await expect(
       account.getByRole("link", { name: "내 글", exact: true }),
     ).toBeVisible();
-    await account.locator(".account-menu > summary").click();
+    if (width >= 360) {
+      await account.locator(".account-menu > summary").click();
+    }
     await expect(
       account.getByRole("link", { name: "계정 설정", exact: true }),
     ).toBeVisible();
@@ -806,7 +859,7 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     await commentsHeading.scrollIntoViewIfNeeded();
     await expect(commentsHeading).toBeInViewport();
     await page.screenshot({
-      path: `test-results/post-viewport-${width}.png`,
+      path: `data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/post-viewport-${width}.png`,
       caret: "initial",
     });
   }
@@ -828,7 +881,7 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
   ).toBeTruthy();
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
   await page.screenshot({
-    path: "test-results/post-mobile.png",
+    path: "data/evidence/ui-ux-20261005/e2e/fixes-recheck-screenshots/post-mobile.png",
     fullPage: true,
     caret: "initial",
   });
@@ -840,14 +893,16 @@ test("비회원 읽기와 모바일 화면, 회원 작성·댓글·로그아웃"
     page.getByRole("heading", { name: "내가 쓴 글", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "글 쓰기", exact: true }),
+    page
+      .getByRole("link", { name: "글 쓰기", exact: true })
+      .filter({ visible: true }),
   ).toHaveCount(1);
   await expect(page.getByRole("link", { name: title })).toBeVisible();
   const statusTabs = page.getByRole("navigation", { name: "내 글 공개 상태" });
   await expect(statusTabs.getByRole("link")).toHaveText([
     "전체 1",
     "공개 1",
-    "공개 전 확인 0",
+    "확인 중 0",
     "공개 보류 0",
   ]);
   await statusTabs.getByRole("link", { name: "공개 1", exact: true }).click();
@@ -909,7 +964,10 @@ test("내 보류 글에서 작성·취소하거나 공개 상태가 바뀐 글�
     await expect(
       statuses.getByRole("link", { name: "공개 보류 1", exact: true }),
     ).toHaveAttribute("aria-current", "page");
-    await page.getByRole("link", { name: "글 쓰기", exact: true }).click();
+    await page
+      .getByRole("link", { name: "글 쓰기", exact: true })
+      .filter({ visible: true })
+      .click();
     await expect(page).toHaveURL(
       `${baseURL}/new?from=${encodeURIComponent("/me?status=held")}`,
     );
@@ -941,7 +999,7 @@ test("내 보류 글에서 작성·취소하거나 공개 상태가 바뀐 글�
     ).toHaveAttribute("aria-current", "page");
     await expect(
       page.getByRole("heading", {
-        name: "공개 보류 글이 없습니다.",
+        name: "공개 보류 글이 없어요.",
         exact: true,
       }),
     ).toBeVisible();
@@ -1136,7 +1194,7 @@ for (const reply of [false, true]) {
     const from = "/?purpose=question&tag=Ghidra&q=recovery&page=2";
     const postPath = `/posts/${id}?from=${encodeURIComponent(from)}`;
     await page.goto(postPath);
-    const rootInput = page.getByLabel("댓글 작성", { exact: true });
+    const rootInput = page.getByLabel("답변 작성", { exact: true });
     const rootDraft = "답글 초안과 구분하여 남겨 둔 원댓글 초안입니다.";
     if (reply) {
       await rootInput.fill(rootDraft);
@@ -1170,7 +1228,7 @@ for (const reply of [false, true]) {
     try {
       await page
         .getByRole("button", {
-          name: reply ? "답글 등록" : "댓글 등록",
+          name: reply ? "답글 등록" : "답변 등록",
           exact: true,
         })
         .click();
@@ -1219,7 +1277,7 @@ for (const reply of [false, true]) {
       );
       await page
         .getByRole("button", {
-          name: reply ? "답글 등록" : "댓글 등록",
+          name: reply ? "답글 등록" : "답변 등록",
           exact: true,
         })
         .click();
@@ -1432,7 +1490,7 @@ test("작성 목적·Markdown 미리보기와 회원·탭별 임시저장을 제
   await expect(bodyInput).toHaveValue(body);
   await expect(bodyInput).toHaveAccessibleName("본문");
   await expect(bodyInput).toHaveAccessibleDescription(
-    "코드는 ```asm 또는 ```cpp로 시작하고 ```로 닫아 주세요. HTML과 외부 이미지는 표시하지 않습니다.",
+    "코드·디스어셈블리는 버튼으로 넣거나 ```로 감싸요. HTML과 외부 이미지는 표시하지 않아요.",
   );
   await expect(page.getByLabel("태그", { exact: false })).toHaveValue(
     "Ghidra, assembly",
@@ -1517,8 +1575,7 @@ test("정확한 주제·목적·검색과 페이지를 유지하며 글에서 �
     db.close();
   }
   await page.setViewportSize({ width: 390, height: 500 });
-  await page.goto("/");
-  await page.locator("summary").filter({ hasText: "주제별로 찾기" }).click();
+  await page.goto("/resources");
   // The displayed representative casing is chosen by SQLite, so inspect its URL.
   const topicLink = page
     .getByRole("navigation", { name: "주제", exact: true })
@@ -1547,13 +1604,18 @@ test("정확한 주제·목적·검색과 페이지를 유지하며 글에서 �
   const tabs = page.getByRole("navigation", { name: "글 목적", exact: true });
   await tabs.getByRole("link", { name: "공유", exact: true }).click();
   await expect(page.locator("#feed-results")).toContainText("공개 글 37개");
-  await page.getByRole("textbox", { name: "글 검색" }).fill(query);
-  await page.getByRole("button", { name: "검색", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("검색 결과");
+  await (await openSearch(page)).fill(query);
+  await page
+    .getByRole("search")
+    .getByRole("button", { name: "검색", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    `‘${query}’ 검색 결과`,
+  );
   await expect(page.locator("#feed-results")).toContainText("공개 글 36개");
-  const table = page.getByRole("table", { name: "게시글 목록" });
-  await expect(table.locator("tbody tr")).toHaveCount(30);
-  const pageOneIds = await table
+  const posts = page.getByRole("list", { name: "게시글 목록" });
+  await expect(posts.locator(":scope > li")).toHaveCount(30);
+  const pageOneIds = await posts
     .locator('a[href^="/posts/"]')
     .evaluateAll((links) =>
       links.map((link) =>
@@ -1564,6 +1626,7 @@ test("정확한 주제·목적·검색과 페이지를 유지하며 글에서 �
   const writeUrl = new URL(
     (await page
       .getByRole("link", { name: "글 쓰기", exact: true })
+      .filter({ visible: true })
       .getAttribute("href"))!,
     "http://fixture.test",
   );
@@ -1575,11 +1638,11 @@ test("정확한 주제·목적·검색과 페이지를 유지하며 글에서 �
     ).searchParams.get("q"),
   ).toBe(query);
   const pagination = page.getByRole("navigation", { name: "목록 페이지" });
-  await expect(pagination).toContainText("1 / 2 페이지");
+  await expect(pagination).toContainText("1 / 2");
   await pagination.getByRole("link", { name: "다음", exact: true }).click();
-  await expect(table.locator("tbody tr")).toHaveCount(6);
-  await expect(pagination).toContainText("2 / 2 페이지");
-  const pageTwoIds = await table
+  await expect(posts.locator(":scope > li")).toHaveCount(6);
+  await expect(pagination).toContainText("2 / 2");
+  const pageTwoIds = await posts
     .locator('a[href^="/posts/"]')
     .evaluateAll((links) =>
       links.map((link) =>
@@ -1589,11 +1652,11 @@ test("정확한 주제·목적·검색과 페이지를 유지하며 글에서 �
   expect(pageTwoIds).toEqual(shareIds.slice(30));
   expect(pageTwoIds.some((id) => privateIds.includes(id!))).toBe(false);
   await pagination.getByRole("link", { name: "이전", exact: true }).click();
-  await expect(table.locator("tbody tr")).toHaveCount(30);
-  await expect(pagination).toContainText("1 / 2 페이지");
+  await expect(posts.locator(":scope > li")).toHaveCount(30);
+  await expect(pagination).toContainText("1 / 2");
   await pagination.getByRole("link", { name: "다음", exact: true }).click();
-  await expect(table.locator("tbody tr")).toHaveCount(6);
-  await expect(pagination).toContainText("2 / 2 페이지");
+  await expect(posts.locator(":scope > li")).toHaveCount(6);
+  await expect(pagination).toContainText("2 / 2");
   const feed = new URL(page.url());
   expect(Object.fromEntries(feed.searchParams)).toEqual({
     purpose: "share",
@@ -1601,7 +1664,7 @@ test("정확한 주제·목적·검색과 페이지를 유지하며 글에서 �
     q: query,
     page: "2",
   });
-  const article = table.getByRole("link", { name: `${query} 34`, exact: true });
+  const article = posts.getByRole("link", { name: `${query} 34`, exact: true });
   await article.scrollIntoViewIfNeeded();
   const savedScroll = await page.evaluate(() => window.scrollY);
   expect(savedScroll).toBeGreaterThan(0);

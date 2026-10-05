@@ -8,6 +8,7 @@ test("자료 길잡이의 공개 범위·검색·주제·페이지·복귀·참�
   page,
   baseURL,
 }, info) => {
+  test.setTimeout(120_000);
   const databasePath = String(info.project.metadata.databasePath);
   expect(dirname(databasePath)).toBe(resolve("data"));
   expect(basename(databasePath)).toMatch(/^e2e-[a-f0-9]+-pass\.sqlite$/);
@@ -51,13 +52,15 @@ test("자료 길잡이의 공개 범위·검색·주제·페이지·복귀·참�
       await page.setViewportSize({ width, height: 700 });
       await page.goto("/resources");
       await expect(
-        page.getByRole("heading", { name: "자료 길잡이", exact: true }),
+        page.getByRole("heading", { name: "주제", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "실행 파일 분석", exact: true }),
+        page.getByRole("heading", { name: /^실행 파일 분석 공개 글 \d+개$/ }),
       ).toBeVisible();
       await expect(
-        page.getByRole("link", { name: "글 쓰기", exact: true }),
+        page
+          .getByRole("link", { name: "글 쓰기", exact: true })
+          .filter({ visible: true }),
       ).toHaveCount(1);
       expect(
         await page.evaluate(
@@ -74,31 +77,52 @@ test("자료 길잡이의 공개 범위·검색·주제·페이지·복귀·참�
     }
     await page.setViewportSize({ width: 1440, height: 700 });
     await page
-      .getByRole("heading", { name: "실행 파일 분석", exact: true })
+      .getByRole("heading", { name: /^실행 파일 분석 공개 글 \d+개$/ })
       .getByRole("link")
       .click();
     await expect(page).toHaveURL(/\/resources\/executables$/);
-    await expect(page.locator(".resource-posts > li")).toHaveCount(1);
-    await page.locator(".resource-posts .post-title-line a").click();
+    const posts = page.getByRole("list", { name: "게시글 목록" });
+    await expect(posts.locator(":scope > li")).toHaveCount(1);
+    await posts.getByRole("heading").getByRole("link").click();
     await expect(
       page.getByRole("link", { name: "목록으로 돌아가기" }),
     ).toHaveAttribute("href", "/resources/executables");
     await page.goto("/resources");
+    await page
+      .getByRole("navigation", { name: "주제", exact: true })
+      .getByRole("link", { name: "Ghidra 주제 글 보기", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/\?tag=Ghidra$/);
+    await page.goto("/resources");
     await page.getByRole("textbox", { name: "글 검색" }).fill(prefix);
-    await page.getByRole("button", { name: "검색", exact: true }).click();
-    await expect(page).toHaveURL(/\/resources\?q=/);
-    await expect(page.locator(".resource-posts > li")).toHaveCount(30);
+    await page
+      .getByRole("search")
+      .getByRole("button", { name: "검색", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/\?q=/);
+    await expect(posts.locator(":scope > li")).toHaveCount(30);
+    // Existing bookmarked resource filters keep their list and return context.
+    await page.goto(`/resources?q=${encodeURIComponent(prefix)}`);
+    await expect(posts.locator(":scope > li")).toHaveCount(30);
     await page.getByRole("link", { name: "다음", exact: true }).click();
     await expect(page).toHaveURL(/page=2/);
-    await page.locator(".resource-posts .topic-inline").first().click();
+    await posts
+      .getByRole("link", { name: "Ghidra 주제 글 보기", exact: true })
+      .first()
+      .click();
     await expect(page).toHaveURL(/\/resources\?tag=Ghidra$/);
     await page.getByRole("textbox", { name: "글 검색" }).fill(prefix);
-    await page.getByRole("button", { name: "검색", exact: true }).click();
+    await page
+      .getByRole("search")
+      .getByRole("button", { name: "검색", exact: true })
+      .click();
     await expect(page).toHaveURL(/tag=Ghidra&q=/);
+    await expect(page).toHaveURL(/\/\?tag=Ghidra&q=/);
+    await page.goto(`/resources?tag=Ghidra&q=${encodeURIComponent(prefix)}`);
     await page.getByRole("link", { name: "다음", exact: true }).click();
     await expect(page).toHaveURL(/page=2/);
     const from = new URL(page.url()).pathname + new URL(page.url()).search;
-    const target = page.locator(".resource-posts .post-title-line a").nth(10);
+    const target = posts.getByRole("heading").getByRole("link").nth(10);
     await target.scrollIntoViewIfNeeded();
     const y = await page.evaluate(() => window.scrollY);
     await target.click();
@@ -107,7 +131,7 @@ test("자료 길잡이의 공개 범위·검색·주제·페이지·복귀·참�
     ).toHaveAttribute("href", from);
     const postPath = new URL(page.url()).pathname + new URL(page.url()).search;
     const loginHref = await page
-      .locator('#comments a[href^="/login"]')
+      .locator('#answers a[href^="/login"]')
       .getAttribute("href");
     expect(new URL(loginHref!, baseURL).searchParams.get("returnTo")).toBe(
       postPath + "#comments",
@@ -117,14 +141,17 @@ test("자료 길잡이의 공개 범위·검색·주제·페이지·복귀·참�
     await expect
       .poll(() => page.evaluate(() => window.scrollY))
       .toBeGreaterThan(y - 100);
-    await page.getByRole("link", { name: "글 쓰기", exact: true }).click();
+    await page
+      .getByRole("link", { name: "글 쓰기", exact: true })
+      .filter({ visible: true })
+      .click();
     await expect(page).toHaveURL(/\/login\?returnTo=/);
     const write = new URL(page.url()).searchParams.get("returnTo")!;
     expect(new URL(write, baseURL).searchParams.get("from")).toBe(from);
     await register(page.request, baseURL!);
     await page.goto(postPath);
     await page.locator("#comment-new").fill("자료의 재현 조건을 확인했습니다.");
-    await page.getByRole("button", { name: "댓글 등록", exact: true }).click();
+    await page.getByRole("button", { name: "답변 등록", exact: true }).click();
     await expect(
       page.getByText("자료의 재현 조건을 확인했습니다.", { exact: true }),
     ).toBeVisible();

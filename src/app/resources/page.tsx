@@ -9,7 +9,7 @@ export async function generateMetadata({
 }: Props): Promise<Metadata> {
   const params = await searchParams;
   return {
-    title: "자료 길잡이",
+    title: "주제",
     alternates: { canonical: "/resources" },
     ...(Object.keys(params).length
       ? { robots: { index: false, follow: true } }

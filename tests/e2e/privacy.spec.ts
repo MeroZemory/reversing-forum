@@ -36,6 +36,7 @@ test("수정본도 Jev 보류나 오류가 나면 작성자만 볼 수 있다", 
   await expect(
     page.getByRole("heading", { name: title, exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "답변 작성" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "댓글 작성" })).toHaveCount(0);
   expect((await page.request.get(`/api/posts/${result.id}`)).status()).toBe(
     200,
@@ -102,16 +103,20 @@ test("보류·API 오류 글을 작성자 외에 노출하지 않는다", async 
     page.getByRole("heading", { name: `비공개 검수 글 ${info.project.name}` }),
   ).toBeVisible();
   const label = result.status === "held" ? "공개 보류" : "공개 전 확인";
+  const filterLabel = result.status === "held" ? "공개 보류" : "확인 중";
   await expect(page.getByText(label, { exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "답변 작성" })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "댓글 작성" })).toHaveCount(0);
   await page
     .getByRole("link", { name: "내 글로 돌아가기", exact: true })
     .click();
   const statuses = page.getByRole("navigation", { name: "내 글 공개 상태" });
   await expect(
-    statuses.getByRole("link", { name: `${label} 1`, exact: true }),
+    statuses.getByRole("link", { name: `${filterLabel} 1`, exact: true }),
   ).toBeVisible();
-  await statuses.getByRole("link", { name: `${label} 1`, exact: true }).click();
+  await statuses
+    .getByRole("link", { name: `${filterLabel} 1`, exact: true })
+    .click();
   await expect(page).toHaveURL(new RegExp(`/me\\?status=${result.status}$`));
   await expect(
     page.getByRole("link", {
@@ -122,7 +127,9 @@ test("보류·API 오류 글을 작성자 외에 노출하지 않는다", async 
   await page.goto("/?purpose=question&tag=Ghidra");
   await expect(page.locator("#feed-results")).toContainText("공개 글 0개");
   await expect(
-    page.getByRole("navigation", { name: "주제", exact: true }),
+    page
+      .getByRole("navigation", { name: "주제", exact: true })
+      .getByRole("link"),
   ).toHaveCount(0);
   await expect(
     page.getByRole("navigation", { name: "내 글 공개 상태" }),

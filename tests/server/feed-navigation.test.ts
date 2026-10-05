@@ -8,6 +8,15 @@ import {
 import { safeReturnPath } from "@/lib/format";
 
 describe("feed navigation", () => {
+  it("preserves questions and the open filter through normalized list returns", () => {
+    const from = "/questions?tag=IDA&q=api&page=2&open=1";
+    expect(safeFeedReturn(from + "&token=private")).toBe(from);
+    expect(safeListReturn(from)).toBe(from);
+    expect(readFeedFilters({ open: "1" }).open).toBe(true);
+    expect(readFeedFilters({ open: ["1"] }).open).toBeUndefined();
+    expect(readFeedFilters({ open: "true" }).open).toBeUndefined();
+    expect(safeFeedReturn("/questions/unknown?open=1")).toBe("/");
+  });
   it("preserves exact resource routes and filters for shared post/write/auth return paths", () => {
     for (const path of [
       "/resources",

@@ -19,6 +19,8 @@ import {
   payloadHash,
 } from "./publication-control";
 import { recordPublishedRelations } from "./duplicates/index";
+import { canonicalTopic, topicVariants } from "@/lib/topic-aliases";
+import { plainExcerpt, supplementSourceCount } from "@/lib/plain-excerpt";
 import { editorialDisplayName } from "@/lib/editorial-labels";
 
 export class ForumError extends Error {
@@ -79,7 +81,7 @@ function detail(r: Row): PostDetail {
   return {
     id: r.id,
     title: r.title,
-    excerpt: r.body.slice(0, 180),
+    excerpt: plainExcerpt(r.body),
     body: r.body,
     kind: r.kind,
     tags: JSON.parse(r.tags),
@@ -89,7 +91,30 @@ function detail(r: Row): PostDetail {
       : { id: r.author_id, name: r.author_name },
     createdAt: r.created_at,
     commentCount: r.comment_count,
-    ...(editorial ? { editorial } : {}),
+    ...(editorial
+      ? {
+          editorial,
+          recordPeriod: editorial.period,
+          sourceCount: supplementSourceCount(r.body),
+        }
+      : {}),
+  };
+}
+// Every user-supplied search value is bound, including LIKE metacharacters.
+const publicTags = "CASE WHEN json_valid(p.tags) THEN p.tags ELSE '[]' END";
+function publicSearch(query?: string) {
+  const value = query?.trim().slice(0, 200);
+  if (!value) return null;
+  const term = `%${value.replace(/[\\%_]/g, "\\$&")}%`;
+  const variants = topicVariants(value);
+  const exact = `EXISTS (SELECT 1 FROM json_each(${publicTags}) t WHERE t.type='text' AND t.value COLLATE NOCASE IN (${variants.map(() => "?").join(",")}))`;
+  const partial = `EXISTS (SELECT 1 FROM json_each(${publicTags}) t WHERE t.type='text' AND t.value LIKE ? ESCAPE '\\')`;
+  const title = "p.title LIKE ? ESCAPE '\\'";
+  const body = "p.body LIKE ? ESCAPE '\\'";
+  return {
+    clause: `(${title} OR ${exact} OR ${partial} OR ${body})`,
+    args: [term, ...variants, term, term],
+    score: `(CASE WHEN ${title} THEN 3 ELSE 0 END + CASE WHEN ${exact} THEN 3 WHEN ${partial} THEN 2 ELSE 0 END + CASE WHEN ${body} THEN 1 ELSE 0 END)`,
   };
 }
 export function listPosts({
@@ -99,27 +124,23 @@ export function listPosts({
 }: { query?: string; kind?: PostKind; limit?: number } = {}): PostSummary[] {
   const clauses = ["p.status='published'"];
   const args: (string | number)[] = [];
-  if (query?.trim()) {
-    clauses.push(
-      "(p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\' OR p.tags LIKE ? ESCAPE '\\')",
-    );
-    const term = `%${query
-      .trim()
-      .slice(0, 200)
-      .replace(/[\\%_]/g, "\\$&")}%`;
-    args.push(term, term, term);
+  const search = publicSearch(query);
+  if (search) {
+    clauses.push(search.clause);
+    args.push(...search.args);
   }
   if (kind) {
     clauses.push("p.kind=?");
     args.push(kind);
   }
+  if (search) args.push(...search.args);
   args.push(
     Number.isFinite(limit) ? Math.max(1, Math.min(100, Math.trunc(limit))) : 30,
   );
   return (
     db
       .prepare(
-        `${postSelect()} WHERE ${clauses.join(" AND ")} ORDER BY p.created_at DESC, p.id LIMIT ?`,
+        `${postSelect()} WHERE ${clauses.join(" AND ")} ORDER BY ${search ? search.score + " DESC, " : ""}p.created_at DESC, p.id LIMIT ?`,
       )
       .all(...args) as Row[]
   ).map((r) => {
@@ -136,12 +157,14 @@ export function listPostPage({
   query,
   purpose,
   tag,
+  open,
   page = 1,
   pageSize = 30,
 }: {
   query?: string;
   purpose?: PostPurpose;
   tag?: string;
+  open?: boolean;
   page?: number;
   pageSize?: number;
 } = {}): {
@@ -153,15 +176,10 @@ export function listPostPage({
 } {
   const clauses = ["p.status='published'"];
   const args: (string | number)[] = [];
-  if (query?.trim()) {
-    clauses.push(
-      "(p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\' OR p.tags LIKE ? ESCAPE '\\')",
-    );
-    const term = `%${query
-      .trim()
-      .slice(0, 200)
-      .replace(/[\\%_]/g, "\\$&")}%`;
-    args.push(term, term, term);
+  const search = publicSearch(query);
+  if (search) {
+    clauses.push(search.clause);
+    args.push(...search.args);
   }
   if (purpose) {
     const kinds = postKinds.filter((kind) => getPostPurpose(kind) === purpose);
@@ -169,11 +187,16 @@ export function listPostPage({
     args.push(...kinds);
   }
   if (tag?.trim()) {
+    const variants = topicVariants(tag);
     clauses.push(
-      "EXISTS (SELECT 1 FROM json_each(p.tags) t WHERE t.type='text' AND t.value = ? COLLATE NOCASE)",
+      `EXISTS (SELECT 1 FROM json_each(${publicTags}) t WHERE t.type='text' AND t.value COLLATE NOCASE IN (${variants.map(() => "?").join(",")}))`,
     );
-    args.push(tag.trim());
+    args.push(...variants);
   }
+  if (open)
+    clauses.push(
+      "p.kind='question' AND NOT EXISTS (SELECT 1 FROM comments c WHERE c.post_id=p.id)",
+    );
   const where = clauses.join(" AND ");
   const size = Number.isFinite(pageSize)
     ? Math.max(1, Math.min(100, Math.trunc(pageSize)))
@@ -190,9 +213,14 @@ export function listPostPage({
     const posts = (
       db
         .prepare(
-          `${postSelect()} WHERE ${where} ORDER BY p.created_at DESC, p.id LIMIT ? OFFSET ?`,
+          `${postSelect()} WHERE ${where} ORDER BY ${search ? search.score + " DESC, " : ""}p.created_at DESC, p.id LIMIT ? OFFSET ?`,
         )
-        .all(...args, size, (currentPage - 1) * size) as Row[]
+        .all(
+          ...args,
+          ...(search?.args ?? []),
+          size,
+          (currentPage - 1) * size,
+        ) as Row[]
     ).map((r) => {
       const {
         body: _body,
@@ -206,20 +234,37 @@ export function listPostPage({
   })();
 }
 
+export function listAllPublicTopics(): { tag: string; count: number }[] {
+  const rows = db
+    .prepare(
+      `SELECT p.id, t.value AS tag FROM posts p, json_each(${publicTags}) t
+    WHERE p.status='published' AND t.type='text' AND trim(t.value)<>''`,
+    )
+    .all() as { id: string; tag: string }[];
+  const topics = new Map<string, { tag: string; ids: Set<string> }>();
+  for (const row of rows) {
+    const tag = canonicalTopic(row.tag);
+    const key = tag.toLowerCase();
+    const entry = topics.get(key) ?? { tag, ids: new Set<string>() };
+    if (tag < entry.tag) entry.tag = tag;
+    entry.ids.add(row.id);
+    topics.set(key, entry);
+  }
+  return [...topics.values()]
+    .map(({ tag, ids }) => ({ tag, count: ids.size }))
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        a.tag.toLowerCase().localeCompare(b.tag.toLowerCase()) ||
+        a.tag.localeCompare(b.tag),
+    );
+}
+
 export function listPublicTopics(limit = 20): { tag: string; count: number }[] {
   const size = Number.isFinite(limit)
     ? Math.max(1, Math.min(100, Math.trunc(limit)))
     : 20;
-  return db
-    .prepare(
-      `SELECT MIN(t.value) AS tag, COUNT(DISTINCT p.id) AS count
-       FROM posts p, json_each(p.tags) t
-       WHERE p.status='published' AND t.type='text' AND trim(t.value)<>''
-       GROUP BY t.value COLLATE NOCASE
-       ORDER BY count DESC, tag COLLATE NOCASE, tag
-       LIMIT ?`,
-    )
-    .all(size) as { tag: string; count: number }[];
+  return listAllPublicTopics().slice(0, size);
 }
 
 export function listMyPosts(userId: string): PostDetail[] {

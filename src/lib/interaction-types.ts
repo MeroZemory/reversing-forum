@@ -21,6 +21,7 @@ export type PostFormProps = {
   viewerId: string;
   initialPurpose?: PostPurpose;
   initialTag?: string;
+  initialTitle?: string;
   from?: string;
   editing?: CreatePostCommand & { id: string; expectedHash: string };
 };

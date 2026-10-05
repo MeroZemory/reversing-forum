@@ -401,7 +401,7 @@ describe("public feed discovery", () => {
 
   it("matches only exact JSON tags case-insensitively, treating wildcard and escaped characters literally", () => {
     seed("exact", { tags: ["IDA", "100%_\\path", 'say "hello"', "분석"] });
-    seed("substring", { tags: ["IDA Pro", "100ABXpath", "재분석"] });
+    seed("substring", { tags: ["IDA plugin", "100ABXpath", "재분석"] });
     seed("body", {
       tags: [],
       title: "IDA",
@@ -425,7 +425,7 @@ describe("public feed discovery", () => {
       title: "needle 50%_\\",
       tags: ["IDA"],
     });
-    seed("wrong-tag", { title: "needle 50%_\\", tags: ["IDA Pro"] });
+    seed("wrong-tag", { title: "needle 50%_\\", tags: ["IDA plugin"] });
     seed("wrong-query", { title: "needle 50ABX", tags: ["IDA"] });
     seed("held", { status: "held", title: "needle 50%_\\", tags: ["IDA"] });
     seed("pending", {

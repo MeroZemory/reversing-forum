@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reversing All 목업</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="review-body">
+
+<!-- 검토용 툴바: 앱 바깥. 구현 대상 아님 -->
+<div class="review" role="toolbar" aria-label="검토용 툴바">
+  <b>Reversing All 목업 v1</b>
+  <div class="review__group" data-r="size">
+    <span class="review__label">미리보기</span>
+    <button data-v="mobile">모바일 390</button><button data-v="tablet">태블릿 768</button><button data-v="pc">PC 1440</button>
+  </div>
+  <div class="review__group" data-r="theme">
+    <button data-v="light">라이트</button><button data-v="dark">다크</button>
+  </div>
+  <div class="review__group" data-r="auth">
+    <button data-v="guest">비회원</button><button data-v="member">회원</button>
+  </div>
+  <div class="review__group">
+    <span class="review__label">상태</span>
+    <select id="r-state" aria-label="상태 예시">
+      <option value="normal">정상(지금 운영과 같음)</option>
+      <option value="active">회원 활동 있음(예시)</option>
+      <option value="loading">로딩</option>
+      <option value="error">오류·없는 글</option>
+    </select>
+  </div>
+  <div class="review__group">
+    <span class="review__label">화면</span>
+    <select id="r-screen" aria-label="화면 바로가기">
+      <option value="">(앱 안에서 이동함)</option>
+      <option value="home">최신 글</option>
+      <option value="open">답을 기다리는 질문</option>
+      <option value="topics">주제 · 길잡이와 모든 주제</option>
+      <option value="guide">주제 · 길잡이(실행 파일 분석)</option>
+      <option value="tag">주제 · 합친 주제(#리버싱)</option>
+      <option value="search">검색 결과(IAT)</option>
+      <option value="search-empty">검색 결과 없음(Ghidra)</option>
+      <option value="search-sheet">모바일 검색 시트</option>
+      <option value="post-short">글 · 짧은 답(실제)</option>
+      <option value="post-supp">글 · 편집자 보충·출처(실제)</option>
+      <option value="post-prov">글 · 출처와 확인 펼침(실제)</option>
+      <option value="post-q">글 · 답을 기다리는 질문(실제)</option>
+      <option value="post-long">글 · 코드·디스어셈블리·표·그림(예시)</option>
+      <option value="zoom">글 · 그림 크게 보기(예시)</option>
+      <option value="post-held">글 · 공개 보류(작성자, 예시)</option>
+      <option value="new">글 쓰기(회원)</option>
+      <option value="me">내 글(회원, 예시)</option>
+    </select>
+  </div>
+  <span class="review__hint">자료: 운영 공개 글 330개 스냅샷(2026-10-05 14:47) · 보라 "예시" = 실제 글·회원 아님</span>
+</div>
+
+<div class="stage"><div class="stage__scaler" id="scaler">
+  <div class="device" id="device" data-size="mobile">
+    <div class="device__scroll" id="scroll">
+      <div class="app" id="app" data-theme="light"></div>
+    </div>
+  </div>
+</div></div>
+
+<!-- 아이콘: 24 격자, 선 1.8 (구현은 기존 lucide-react 의 같은 이름 아이콘) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9.5 5.5 6.5 6.5-6.5 6.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3 10 14M21 3l-7 18-4-7-7-4z"/></symbol>
+</svg>
+
+<script src="data.js"></script>
+<script src="core.js"></script>
+<script src="views.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

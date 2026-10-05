@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { loadViewer } from "@/server/screens";
+import { loadSiteNavigation, loadViewer } from "@/server/screens";
 import { AccountButton } from "@/features/account-button";
 import { siteUrl } from "@/server/site-config";
 import "./globals.css";
@@ -25,15 +25,25 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const viewer = await loadViewer();
+  const navigation = loadSiteNavigation();
   return (
-    // Browser companions can add attributes to this document element before
+    // The theme script and browser companions can change root attributes before
     // hydration. Scope the exception to <html>; page content stays checked.
-    <html lang="ko" data-scroll-behavior="smooth" suppressHydrationWarning>
+    <html
+      lang="ko"
+      data-theme="system"
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
+      <head>
+        <script src="/theme-bootstrap.js" async blocking="render" />
+      </head>
       <body>
         <a className="skip-link" href="#main">
           본문으로 바로가기
         </a>
         <SiteHeader
+          {...navigation}
           viewer={viewer}
           logoutControl={viewer ? <AccountButton /> : null}
         />

@@ -9,6 +9,7 @@ const services = vi.hoisted(() => ({
   listMyPosts: vi.fn(),
   listPostPage: vi.fn(),
   listPublicTopics: vi.fn(),
+  listAllPublicTopics: vi.fn(),
   relatedPublicPosts: vi.fn(),
   publicationNotice: vi.fn(),
 }));
@@ -73,6 +74,14 @@ beforeEach(() => {
   services.listMyPosts.mockReturnValue([]);
   services.listComments.mockReturnValue([]);
   services.listPublicTopics.mockReturnValue([]);
+  services.listAllPublicTopics.mockReturnValue([]);
+  services.listPostPage.mockReturnValue({
+    posts: [],
+    total: 0,
+    page: 1,
+    pageSize: 30,
+    pageCount: 1,
+  });
   services.relatedPublicPosts.mockResolvedValue({ relatedPostIds: [] });
   services.publicationNotice.mockReturnValue(null);
 });
